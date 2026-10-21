@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+import shutil
 import threading
 import urllib.request
 import zipfile
@@ -36,13 +37,17 @@ _last_print_percent: int = -1
 
 
 def get_ffmpeg_path() -> Path:
-    """Return local path to downloaded ffmpeg binary."""
-    return get_config_path().parent / "bin" / "ffmpeg.exe"
+    """Return local path to downloaded ffmpeg binary or system PATH ffmpeg."""
+    sys_ffmpeg = shutil.which("ffmpeg")
+    if sys_ffmpeg:
+        return Path(sys_ffmpeg)
+    binary_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    return get_config_path().parent / "bin" / binary_name
 
 
 def is_ffmpeg_installed() -> bool:
-    """Check if ffmpeg executable exists on disk."""
-    return get_ffmpeg_path().exists()
+    """Check if ffmpeg executable exists on disk or in system PATH."""
+    return shutil.which("ffmpeg") is not None or get_ffmpeg_path().exists()
 
 
 def download_ffmpeg_async() -> None:
@@ -50,6 +55,11 @@ def download_ffmpeg_async() -> None:
     global _download_thread, _download_status, _last_print_percent
     if is_ffmpeg_installed():
         _download_status = "done"
+        return
+
+    if os.name != "nt":
+        logger.info("[FFMPEG] Please install ffmpeg via your package manager (e.g., 'brew install ffmpeg' on macOS or 'sudo apt install ffmpeg' on Linux)")
+        _download_status = "idle"
         return
 
     if _download_thread and _download_thread.is_alive():
