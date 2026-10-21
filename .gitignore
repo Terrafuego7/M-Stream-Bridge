@@ -4,7 +4,6 @@
 !.env.example
 
 # Build Outputs & Ephemeral Distributions
-/dist/
 /bin/
 /temp/
 *.build/
