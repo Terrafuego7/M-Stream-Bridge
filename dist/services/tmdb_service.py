@@ -72,6 +72,9 @@ class TMDBService:
                     tmdb_data['backdrop'] = best_item.get('backdrop_path') or best_item.get('poster_path')
                     tmdb_data['media_type'] = best_item.get('media_type')
                     tmdb_data['id'] = best_item.get('id')
+                    self._log('INFO', f"[TMDB] Artwork found for {title!r} -> id={best_item.get('id')}")
+                else:
+                    self._log('DEBUG', f'[TMDB] No artwork found for {title!r}')
                 if len(self.cache) >= self.max_cache:
                     del self.cache[next(iter(self.cache))]
                 self.cache[title] = tmdb_data
