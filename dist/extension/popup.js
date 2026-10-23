@@ -195,4 +195,51 @@ el.openMigaku && el.openMigaku.addEventListener("click", async () => {
     } catch (err) {
         setStatus(!1, "Failed to launch Migaku Player."), showToast("Failed to open Migaku");
     }
-}), refreshState();
+});
+
+const UPDATE_CHECK_INTERVAL_MS = 432e5;
+
+function isNewerVersion(candidate, current) {
+    const parseVersion = value => {
+        const [core, prerelease = ""] = String(value || "").trim().replace(/^v/i, "").split("-", 2), parts = core.split(".").slice(0, 3).map(token => Number.parseInt(token, 10) || 0);
+        for (;parts.length < 3; ) parts.push(0);
+        return {
+            parts: parts,
+            prerelease: prerelease
+        };
+    }, next = parseVersion(candidate), active = parseVersion(current);
+    for (let i = 0; i < 3; i++) if (next.parts[i] !== active.parts[i]) return next.parts[i] > active.parts[i];
+    return Boolean(active.prerelease && !next.prerelease);
+}
+
+async function checkExtensionUpdate() {
+    try {
+        const manifest = chrome.runtime.getManifest ? chrome.runtime.getManifest() : null, currentVersion = manifest?.version || "3.0.4", cached = await chrome.storage.local.get([ "upstreamVersion", "downloadUrl", "lastUpdateCheck" ]), now = Date.now();
+        let version = cached?.upstreamVersion, downloadUrl = cached?.downloadUrl || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest";
+        if (!version || now - (cached?.lastUpdateCheck || 0) > 432e5) {
+            const resp = await fetch("https://raw.githubusercontent.com/Zielzy/M-Stream-Bridge/main/index.min.json", {
+                cache: "no-store"
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                data && data.version && (version = data.version, downloadUrl = data.download_url || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest", 
+                await chrome.storage.local.set({
+                    upstreamVersion: version,
+                    downloadUrl: downloadUrl,
+                    lastUpdateCheck: now
+                }));
+            }
+        }
+        if (version && isNewerVersion(version, currentVersion)) {
+            const banner = document.getElementById("update-banner"), verSpan = document.getElementById("update-ver"), link = document.getElementById("update-link");
+            banner && verSpan && link && (verSpan.textContent = `v${version}`, link.href = downloadUrl, 
+            banner.style.display = "flex"), chrome.action?.setBadgeText && (chrome.action.setBadgeText({
+                text: "UP"
+            }), chrome.action.setBadgeBackgroundColor({
+                color: "#7c3aed"
+            }));
+        }
+    } catch (_e) {}
+}
+
+refreshState(), checkExtensionUpdate();

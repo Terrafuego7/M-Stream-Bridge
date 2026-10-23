@@ -632,6 +632,46 @@ async function handleRuntimeMessage(message, sender) {
     }
 }
 
+function isNewerVersion(candidate, current) {
+    const parseVersion = value => {
+        const [core, prerelease = ""] = String(value || "").trim().replace(/^v/i, "").split("-", 2), parts = core.split(".").slice(0, 3).map(token => Number.parseInt(token, 10) || 0);
+        for (;parts.length < 3; ) parts.push(0);
+        return {
+            parts: parts,
+            prerelease: prerelease
+        };
+    }, next = parseVersion(candidate), active = parseVersion(current);
+    for (let i = 0; i < 3; i++) if (next.parts[i] !== active.parts[i]) return next.parts[i] > active.parts[i];
+    return Boolean(active.prerelease && !next.prerelease);
+}
+
+async function checkUpstreamUpdate() {
+    try {
+        const currentVersion = chrome.runtime.getManifest()?.version || "3.0.4", cached = await chrome.storage.local.get([ "upstreamVersion", "downloadUrl", "lastUpdateCheck" ]), now = Date.now();
+        let version = cached?.upstreamVersion;
+        if (!version || now - (cached?.lastUpdateCheck || 0) > 432e5) {
+            const resp = await fetch("https://raw.githubusercontent.com/Zielzy/M-Stream-Bridge/main/index.min.json", {
+                cache: "no-store"
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                data?.version && (version = data.version, await chrome.storage.local.set({
+                    upstreamVersion: version,
+                    downloadUrl: data.download_url || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest",
+                    lastUpdateCheck: now
+                }));
+            }
+        }
+        version && isNewerVersion(version, currentVersion) ? chrome.action?.setBadgeText && (chrome.action.setBadgeText({
+            text: "UP"
+        }), chrome.action.setBadgeBackgroundColor({
+            color: "#7c3aed"
+        })) : chrome.action?.setBadgeText && chrome.action.setBadgeText({
+            text: ""
+        });
+    } catch (_e) {}
+}
+
 chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
     if (!isAllowedRequestType(details?.type)) return;
     if (!isInterestingUrl(details?.url)) return;
@@ -712,7 +752,9 @@ chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
 }, {
     urls: [ "<all_urls>" ]
 }, [ "responseHeaders", "extraHeaders" ]), chrome.runtime.onInstalled.addListener(() => {
-    logInfo("installed", "v3.0.4");
+    logInfo("installed", "v3.0.4"), checkUpstreamUpdate();
+}), chrome.runtime.onStartup.addListener(() => {
+    checkUpstreamUpdate();
 }), chrome.tabs.onActivated.addListener(async activeInfo => {
     activeTabId = Number(activeInfo?.tabId ?? -1), await maybeSetStreamForActiveTab(activeTabId);
 }), chrome.tabs.onRemoved.addListener(tabId => {

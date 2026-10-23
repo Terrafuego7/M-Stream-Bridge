@@ -384,5 +384,79 @@ if (el.openMigaku) {
   });
 }
 
+// ==========================================================================
+// 8. Application Version & Update Checker
+// ==========================================================================
+
+const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+/**
+ * Compares two semantic version strings.
+ * @param {string} candidate - Available upstream version.
+ * @param {string} current - Currently installed version.
+ * @returns {boolean} True if candidate is strictly newer than current.
+ */
+function isNewerVersion(candidate, current) {
+  const parseVersion = (value) => {
+    const [core, prerelease = ""] = String(value || "").trim().replace(/^v/i, "").split("-", 2);
+    const parts = core.split(".").slice(0, 3).map((token) => Number.parseInt(token, 10) || 0);
+    while (parts.length < 3) parts.push(0);
+    return { parts, prerelease };
+  };
+  const next = parseVersion(candidate);
+  const active = parseVersion(current);
+  for (let i = 0; i < 3; i++) {
+    if (next.parts[i] !== active.parts[i]) return next.parts[i] > active.parts[i];
+  }
+  return Boolean(active.prerelease && !next.prerelease);
+}
+
+/**
+ * Checks GitHub repository for upstream version updates with local caching.
+ */
+async function checkExtensionUpdate() {
+  try {
+    const manifest = chrome.runtime.getManifest ? chrome.runtime.getManifest() : null;
+    const currentVersion = manifest?.version || "__VERSION__";
+
+    const cached = await chrome.storage.local.get(["upstreamVersion", "downloadUrl", "lastUpdateCheck"]);
+    const now = Date.now();
+    let version = cached?.upstreamVersion;
+    let downloadUrl = cached?.downloadUrl || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest";
+
+    if (!version || (now - (cached?.lastUpdateCheck || 0) > UPDATE_CHECK_INTERVAL_MS)) {
+      const resp = await fetch("https://raw.githubusercontent.com/Zielzy/M-Stream-Bridge/main/index.min.json", { cache: "no-store" });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.version) {
+          version = data.version;
+          downloadUrl = data.download_url || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest";
+          await chrome.storage.local.set({
+            upstreamVersion: version,
+            downloadUrl: downloadUrl,
+            lastUpdateCheck: now,
+          });
+        }
+      }
+    }
+
+    if (version && isNewerVersion(version, currentVersion)) {
+      const banner = document.getElementById("update-banner");
+      const verSpan = document.getElementById("update-ver");
+      const link = document.getElementById("update-link");
+      if (banner && verSpan && link) {
+        verSpan.textContent = `v${version}`;
+        link.href = downloadUrl;
+        banner.style.display = "flex";
+      }
+      if (chrome.action?.setBadgeText) {
+        chrome.action.setBadgeText({ text: "UP" });
+        chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+      }
+    }
+  } catch (_e) { }
+}
+
 void refreshState();
+void checkExtensionUpdate();
 

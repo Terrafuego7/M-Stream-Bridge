@@ -187,7 +187,7 @@ class JimakuBridge:
         page_episode = page_episode_raw if isinstance(page_episode_raw, int) else None
         detected_episode = detected_episode_raw if isinstance(detected_episode_raw, int) else None
         if not title:
-            LOGGER.warning("[JIMAKU] stream title is empty")
+            LOGGER.debug("[JIMAKU] stream title is empty")
             return
 
         LOGGER.info(

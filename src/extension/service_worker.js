@@ -1180,8 +1180,67 @@ chrome.webRequest.onCompleted.addListener(
   ["responseHeaders", "extraHeaders"]
 );
 
+// ==========================================================================
+// Upstream Version & Update Check
+// ==========================================================================
+
+function isNewerVersion(candidate, current) {
+  const parseVersion = (value) => {
+    const [core, prerelease = ""] = String(value || "").trim().replace(/^v/i, "").split("-", 2);
+    const parts = core.split(".").slice(0, 3).map((token) => Number.parseInt(token, 10) || 0);
+    while (parts.length < 3) parts.push(0);
+    return { parts, prerelease };
+  };
+  const next = parseVersion(candidate);
+  const active = parseVersion(current);
+  for (let i = 0; i < 3; i++) {
+    if (next.parts[i] !== active.parts[i]) return next.parts[i] > active.parts[i];
+  }
+  return Boolean(active.prerelease && !next.prerelease);
+}
+
+async function checkUpstreamUpdate() {
+  try {
+    const currentVersion = chrome.runtime.getManifest()?.version || "__VERSION__";
+    const cached = await chrome.storage.local.get(["upstreamVersion", "downloadUrl", "lastUpdateCheck"]);
+    const now = Date.now();
+    let version = cached?.upstreamVersion;
+
+    if (!version || (now - (cached?.lastUpdateCheck || 0) > 12 * 60 * 60 * 1000)) {
+      const resp = await fetch("https://raw.githubusercontent.com/Zielzy/M-Stream-Bridge/main/index.min.json", { cache: "no-store" });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data?.version) {
+          version = data.version;
+          await chrome.storage.local.set({
+            upstreamVersion: version,
+            downloadUrl: data.download_url || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest",
+            lastUpdateCheck: now,
+          });
+        }
+      }
+    }
+
+    if (version && isNewerVersion(version, currentVersion)) {
+      if (chrome.action?.setBadgeText) {
+        chrome.action.setBadgeText({ text: "UP" });
+        chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+      }
+    } else {
+      if (chrome.action?.setBadgeText) {
+        chrome.action.setBadgeText({ text: "" });
+      }
+    }
+  } catch (_e) { }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   logInfo("installed", "v__VERSION__");
+  checkUpstreamUpdate();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  checkUpstreamUpdate();
 });
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {

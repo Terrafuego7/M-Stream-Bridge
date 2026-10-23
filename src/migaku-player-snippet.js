@@ -1329,7 +1329,6 @@
           if (p !== undefined && p.catch) {
             return p.catch((e) => {
               if (e.name === "AbortError") {
-                console.warn("[Bridge-Diag] Suppressed AbortError during play() to save Batch Mining", e);
                 return Promise.resolve();
               }
               throw e;

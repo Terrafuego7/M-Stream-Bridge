@@ -153,6 +153,44 @@
       white-space: nowrap;
     }
 
+    
+    .update-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(135deg, rgba(75, 0, 178, 0.08), rgba(109, 40, 217, 0.12));
+      border-bottom: 1px solid var(--border);
+      padding: 6px 12px;
+      font-size: 10px;
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .update-banner strong {
+      font-weight: 800;
+    }
+
+    .update-banner .ub-btn {
+      color: #ffffff;
+      background: var(--primary);
+      border-radius: 9999px;
+      padding: 2.5px 8.5px;
+      text-decoration: none;
+      font-size: 9px;
+      font-weight: 700;
+      font-family: var(--sans);
+      letter-spacing: 0.02em;
+      transition: background 0.2s, transform 0.1s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .update-banner .ub-btn:hover {
+      background: var(--primary-hover);
+      transform: translateY(-0.5px);
+    }
+
     .body {
       padding: 12px;
     }
@@ -365,6 +403,11 @@
       <div class="tb-right">
         <span class="tb-ver">v3.0.4</span>
       </div>
+    </div>
+    
+    <div id="update-banner" class="update-banner" style="display: none;">
+      <span>Update <strong id="update-ver"></strong> available!</span>
+      <a id="update-link" href="https://github.com/Zielzy/M-Stream-Bridge/releases/latest" target="_blank" class="ub-btn">Get it</a>
     </div>
 
     

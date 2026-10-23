@@ -99,7 +99,7 @@ class JimakuBridge:
         page_episode = page_episode_raw if isinstance(page_episode_raw, int) else None
         detected_episode = detected_episode_raw if isinstance(detected_episode_raw, int) else None
         if not title:
-            LOGGER.warning('[JIMAKU] stream title is empty')
+            LOGGER.debug('[JIMAKU] stream title is empty')
             return
         LOGGER.info('[JIMAKU] poll | title=%s | page_ep=%s | detected_ep=%s | last_processed=%s', title, page_episode, detected_episode, self.last_processed_title)
         with STATE_LOCK:
