@@ -18,7 +18,7 @@
  */
 
 // ==========================================================================
-// 1. Theme Management
+// 1. Theme & Layout Management
 // ==========================================================================
 
 /**
@@ -28,6 +28,14 @@ function toggleTheme() {
   const isDark = document.body.classList.toggle("dark");
   localStorage.setItem("theme", isDark ? "dark" : "light");
   updateThemeIcon(isDark);
+}
+
+/**
+ * Toggles sidebar collapsed state and saves preference to localStorage.
+ */
+function toggleSidebar() {
+  const isCollapsed = document.body.classList.toggle("sidebar-collapsed");
+  localStorage.setItem("sidebar_collapsed", isCollapsed ? "1" : "0");
 }
 
 /**
@@ -59,6 +67,18 @@ function updateThemeIcon(isDark) {
   const isDark = savedTheme === "dark";
   document.addEventListener("DOMContentLoaded", () => updateThemeIcon(isDark));
 })();
+
+// Keyboard shortcut: Ctrl+B or Cmd+B to toggle sidebar navigation
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === "b" || e.key === "B")) {
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+      return;
+    }
+    e.preventDefault();
+    toggleSidebar();
+  }
+});
 
 // ==========================================================================
 // 2. Global Constants & State Variables

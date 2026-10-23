@@ -78,6 +78,7 @@
   --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
   --mono: "Cascadia Mono", Consolas, monospace;
   --sidebar-w: 220px;
+  --sidebar-w-collapsed: 72px;
   --topbar-h: 64px;
   --radius: 20px;
   --radius-sm: 12px;
@@ -149,6 +150,11 @@ body {
   width: 100%;
   background: transparent;
   position: relative;
+  transition: grid-template-columns 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.sidebar-collapsed .wrap {
+  grid-template-columns: var(--sidebar-w-collapsed) 1fr;
 }
 
 .main {
@@ -265,6 +271,45 @@ body {
   color: #ef4444;
 }
 
+.sidebar-toggle-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-second);
+  padding: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 3px 3px 6px var(--shadow-dark), -3px -3px 6px var(--shadow-light);
+  transition: all 0.2s ease;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle-btn:hover {
+  color: var(--primary);
+  border-color: var(--border-hover);
+  box-shadow: 4px 4px 8px var(--shadow-dark), -4px -4px 8px var(--shadow-light);
+  transform: translateY(-1px);
+}
+
+.sidebar-toggle-btn:active {
+  transform: translateY(0);
+  box-shadow: inset 2px 2px 4px var(--shadow-dark), inset -2px -2px 4px var(--shadow-light);
+}
+
+.sidebar-toggle-btn svg {
+  display: block;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.sidebar-collapsed .sidebar-toggle-btn svg {
+  transform: scaleX(-1);
+}
+
 .topbar-clock {
   font-family: var(--mono);
   font-size: 11px;
@@ -323,9 +368,14 @@ body {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overflow-x: hidden;
   z-index: 5;
   box-shadow: 4px 0 12px var(--shadow-dark);
-  transition: all 0.3s;
+  transition: padding 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.sidebar-collapsed .sidebar {
+  padding: 24px 8px;
 }
 
 .nav-section {
@@ -335,6 +385,17 @@ body {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding: 0 16px 12px;
+  white-space: nowrap;
+  transition: opacity 0.2s ease, max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1), padding 0.3s cubic-bezier(0.16, 1, 0.3, 1), margin 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.sidebar-collapsed .nav-section {
+  opacity: 0;
+  max-height: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .nav-item {
@@ -347,9 +408,15 @@ body {
   font-weight: 600;
   color: var(--text-second);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s ease, padding 0.3s cubic-bezier(0.16, 1, 0.3, 1), gap 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   user-select: none;
   margin-bottom: 8px;
+}
+
+body.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 12px;
+  gap: 0;
 }
 
 .nav-item:hover {
@@ -376,6 +443,25 @@ body {
   transition: opacity 0.2s;
 }
 
+.nav-item span,
+.nav-kofi span,
+.nav-shutdown span {
+  max-width: 150px;
+  opacity: 1;
+  display: inline-block;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity 0.2s ease, max-width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.sidebar-collapsed .nav-item span,
+body.sidebar-collapsed .nav-kofi span,
+body.sidebar-collapsed .nav-shutdown span {
+  opacity: 0;
+  max-width: 0;
+  pointer-events: none;
+}
+
 .nav-gap {
   flex: 1;
 }
@@ -385,6 +471,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  transition: padding 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.sidebar-collapsed .nav-bottom {
+  padding: 0 2px;
 }
 
 .nav-kofi {
@@ -400,9 +491,17 @@ body {
   background: var(--primary-bg);
   border: 1px solid var(--border);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s ease, padding 0.3s cubic-bezier(0.16, 1, 0.3, 1), gap 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   user-select: none;
   box-shadow: 2px 2px 6px var(--shadow-dark), -2px -2px 6px var(--shadow-light);
+}
+
+body.sidebar-collapsed .nav-kofi,
+body.sidebar-collapsed .nav-shutdown {
+  justify-content: center;
+  padding: 12px;
+  width: 100%;
+  gap: 0;
 }
 
 .nav-kofi svg {
@@ -435,7 +534,7 @@ body {
   color: var(--red);
   cursor: pointer;
   text-align: center;
-  transition: all 0.2s ease;
+  transition: all 0.2s ease, padding 0.3s cubic-bezier(0.16, 1, 0.3, 1), gap 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   align-items: center;
   justify-content: center;

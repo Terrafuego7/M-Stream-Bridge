@@ -18,6 +18,9 @@
 if (localStorage.getItem("theme") === "dark") {
       document.body.classList.add("dark");
     }
+    if (localStorage.getItem("sidebar_collapsed") === "1") {
+      document.body.classList.add("sidebar-collapsed");
+    }
 </script>
 
   <div class="wrap">
@@ -25,6 +28,13 @@ if (localStorage.getItem("theme") === "dark") {
     
     
     <header class="topbar">
+      <button class="sidebar-toggle-btn" id="sidebarToggle" onclick="toggleSidebar()" title="Toggle Sidebar (Ctrl+B)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+          <line x1="9" y1="3" x2="9" y2="21" />
+        </svg>
+      </button>
+
       <div class="server-badge offline" id="srvBadge">
         <div class="srv-dot" id="srvDot"></div>
         <span id="srvText" style="letter-spacing: .04em; text-transform: uppercase;">OFFLINE</span>
@@ -62,7 +72,7 @@ if (localStorage.getItem("theme") === "dark") {
     <aside class="sidebar">
       <div class="nav-section">Menu</div>
 
-      <div class="nav-item active" onclick="showPanel('home')">
+      <div class="nav-item active" onclick="showPanel('home')" title="Overview">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="7" rx="1" />
           <rect x="14" y="3" width="7" height="7" rx="1" />
@@ -72,7 +82,7 @@ if (localStorage.getItem("theme") === "dark") {
         <span>Overview</span>
       </div>
 
-      <div class="nav-item" onclick="showPanel('api')">
+      <div class="nav-item" onclick="showPanel('api')" title="API Key">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="11" rx="2" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -83,7 +93,7 @@ if (localStorage.getItem("theme") === "dark") {
       <div class="nav-gap"></div>
 
       <div class="nav-bottom">
-        <a href="https://ko-fi.com/zielzy" target="_blank" class="nav-kofi" id="btnKofi" style="text-decoration: none;">
+        <a href="https://ko-fi.com/zielzy" target="_blank" class="nav-kofi" id="btnKofi" style="text-decoration: none;" title="Support on Ko-fi">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
             <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path>
@@ -94,7 +104,7 @@ if (localStorage.getItem("theme") === "dark") {
           <span>Support</span>
         </a>
 
-        <button class="nav-shutdown" id="btnShutdown">
+        <button class="nav-shutdown" id="btnShutdown" title="Shutdown Server">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
             <line x1="12" y1="2" x2="12" y2="12" />
