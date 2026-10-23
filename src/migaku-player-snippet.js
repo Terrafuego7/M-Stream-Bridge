@@ -1422,23 +1422,6 @@
     if (hls) {
       updateDurationState();
 
-      if (video.canPlayType("application/vnd.apple.mpegurl") || video.canPlayType("application/x-mpegURL")) {
-        video.src = sourceUrl;
-        video.load();
-        if (!isFullMode) {
-          video.muted = false;
-          if (typeof video.volume === "number" && video.volume === 0) video.volume = 1;
-        }
-        try {
-          await video.play();
-        } catch (_err) { }
-        sharedState.lastPlaybackKey = streamKey;
-        sharedState.lastPlaybackTitle = streamTitle;
-        setStatus(`HLS feed active: ${info.title}`, false);
-        updateDurationState();
-        return;
-      }
-
       if (window.Hls && window.Hls.isSupported && window.Hls.isSupported()) {
         if (video.isFirstBootstrap) {
           video.removeAttribute("src");
@@ -1568,7 +1551,25 @@
         setupHlsPlayer(0);
         return;
       }
-      throw new Error("HLS detected, but Hls.js is unavailable.");
+
+      if (video.canPlayType("application/vnd.apple.mpegurl") || video.canPlayType("application/x-mpegURL")) {
+        video.src = sourceUrl;
+        video.load();
+        if (!isFullMode) {
+          video.muted = false;
+          if (typeof video.volume === "number" && video.volume === 0) video.volume = 1;
+        }
+        try {
+          await video.play();
+        } catch (_err) { }
+        sharedState.lastPlaybackKey = streamKey;
+        sharedState.lastPlaybackTitle = streamTitle;
+        setStatus(`HLS feed active: ${info.title}`, false);
+        updateDurationState();
+        return;
+      }
+
+      throw new Error("HLS detected, but neither Hls.js nor native HLS playback is supported.");
     }
 
     // B. Direct Video Playback Path (MP4, etc.)

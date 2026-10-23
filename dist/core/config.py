@@ -101,8 +101,8 @@ def _load_dotenv() -> None:
             break
 
 def load_tmdb_api_key() -> str:
-    encrypted = [225, 179, 183, 228, 182, 176, 225, 179, 181, 182, 178, 182, 229, 179, 180, 184, 185, 176, 180, 184, 226, 228, 225, 229, 225, 180, 229, 230, 179, 227, 184, 180]
-    xor_key = 128
+    encrypted = [147, 193, 197, 150, 196, 194, 147, 193, 199, 196, 192, 196, 151, 193, 198, 202, 203, 194, 198, 202, 144, 150, 147, 151, 147, 198, 151, 148, 193, 145, 202, 198]
+    xor_key = 242
     return bytes((value ^ xor_key for value in encrypted)).decode('utf-8')
 
 def ensure_config_exists() -> None:

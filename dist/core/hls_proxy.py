@@ -77,7 +77,7 @@ class HlsProxyMixin:
             headers = dict(base)
         client_replay_headers = self._extract_client_replay_headers()
         if lookup_mode == 'none' and (not picked) and (not base) and (not map_size):
-            return None
+            self._log_throttled('hls_no_headers_fallback', 'WARN', f'no captured headers, trying with page identity only | target={target_url[:100]}', interval_seconds=10)
         headers.update(client_replay_headers)
         headers = self._apply_identity_headers(headers, stream_snapshot)
         target_parsed = urllib.parse.urlparse(target_url)
@@ -245,6 +245,7 @@ class HlsProxyMixin:
         try:
             hls_headers = self._build_hls_upstream_headers(stream_url)
             if not hls_headers:
+                self._log('WARN', f'hls proxy failed (424): missing headers for stream URL: {stream_url[:120]}')
                 self._send_json(424, {'status': 'error', 'message': 'Headers for the HLS URL were not found. Capture data is not enough yet.'})
                 return
             target_url = stream_url
@@ -256,6 +257,8 @@ class HlsProxyMixin:
             with self._perform_urlopen(target_url, headers=hls_headers, timeout=20, stream=False) as resp:
                 data = resp.read()
                 remote_content_type = resp.headers.get('Content-Type', '')
+            if b'#EXTM3U' not in data:
+                self._log('WARN', f'upstream HLS response is not an m3u8 playlist (first bytes: {data[:64]!r}) | target={target_url[:120]}')
             lowered_content_type = (remote_content_type or '').lower()
             looks_like_playlist = self._payload_looks_m3u8(data)
             if looks_like_playlist:
@@ -435,6 +438,7 @@ class HlsProxyMixin:
         try:
             hls_headers = self._build_hls_upstream_headers(target_url)
             if not hls_headers:
+                self._log('WARN', f'hls proxy segment failed (424): missing headers for target: {target_url[:120]}')
                 self._send_json(424, {'status': 'error', 'message': 'Headers for the target segment/playlist were not found.'})
                 return
             data = b''

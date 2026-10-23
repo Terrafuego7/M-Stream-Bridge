@@ -371,7 +371,7 @@ class CaptureEngineMixin:
             return
         with STATE_LOCK:
             ownership = current_stream.get('ownership')
-            is_extension_source = capture_source in ('hook', 'webRequest', 'page_meta_iframe')
+            is_extension_source = capture_source.startswith('webRequest') or capture_source in ('hook', 'page_meta_iframe', 'tab_switch')
             if ownership and ownership.get('mode') == 'manual_restore':
                 if time.time() - ownership.get('created_at', 0) > 43200:
                     self._log('WARN', f'[{capture_source}] ownership fuse tripped after 12 hours | clearing ownership')
@@ -836,6 +836,7 @@ class CaptureEngineMixin:
         try:
             hls_headers = self._build_hls_upstream_headers(stream_url)
             if not hls_headers:
+                self._log('WARN', f'stream duration failed (424): missing headers for stream URL: {stream_url[:120]}')
                 self._send_json(424, {'status': 'error', 'message': 'No headers available', 'duration_sec': 0})
                 return
             req = self._make_request(stream_url, hls_headers)

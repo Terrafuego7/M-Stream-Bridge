@@ -724,16 +724,25 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
     def _apply_identity_headers(self, headers: dict[str, str], stream_snapshot: dict[str, Any] | None=None) -> dict[str, str]:
         if stream_snapshot is None:
             stream_snapshot = self._snapshot_stream(include_replay_map=False)
-        referer = (stream_snapshot.get('referer') or '').strip()
+        referer = (stream_snapshot.get('referer') or stream_snapshot.get('page_url') or '').strip()
         cookie = (stream_snapshot.get('cookie') or '').strip()
         user_agent = (stream_snapshot.get('user_agent') or '').strip()
         origin = (stream_snapshot.get('origin') or '').strip()
+        if not origin and referer:
+            try:
+                p = urllib.parse.urlparse(referer)
+                if p.scheme and p.netloc:
+                    origin = f'{p.scheme}://{p.netloc}'
+            except Exception:
+                pass
         if referer and 'referer' not in headers:
             headers['referer'] = referer
         if cookie and 'cookie' not in headers:
             headers['cookie'] = cookie
         if user_agent and 'user-agent' not in headers:
             headers['user-agent'] = user_agent
+        elif 'user-agent' not in headers:
+            headers['user-agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         if origin and 'origin' not in headers:
             headers['origin'] = origin
         if 'accept' not in headers:
