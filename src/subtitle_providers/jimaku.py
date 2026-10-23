@@ -672,6 +672,7 @@ class JimakuBridge:
 
             try:
                 search_url, search_params = get_tmdb_endpoint("search/multi")
+                LOGGER.info(f"[JIMAKU] Querying TMDB via https://{urllib.parse.urlparse(search_url).netloc} for {search_query!r}")
                 req_params = dict(search_params)
                 req_params.update({"query": search_query, "include_adult": "false"})
                 if tmdb_api_key and "api_key" not in req_params:

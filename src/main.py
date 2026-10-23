@@ -63,6 +63,7 @@ from core.cloudflare import (
     _solve_cloudflare_turnstile,
 )
 from core.config import (
+    get_tmdb_endpoint,
     ensure_config_exists,
     get_config_path,
     load_jimaku_api_key,
@@ -2200,9 +2201,17 @@ def run_server() -> None:
     print("=" * 72)
     print("M-Stream Bridge v__VERSION__")
     print("=" * 72)
-    print(f"Dashboard  : http://{HOST}:{PORT}")
-    print(f"Bridge API : http://{HOST}:{PORT}")
-    print("Endpoint   :")
+    try:
+        from core.config import get_tmdb_endpoint
+        tmdb_url, _ = get_tmdb_endpoint("")
+        tmdb_host = urllib.parse.urlparse(tmdb_url).netloc
+    except Exception:
+        tmdb_host = "m-stream-tmdb.zielzy.my.id"
+
+    print(f"Dashboard    : http://{HOST}:{PORT}")
+    print(f"Bridge API   : http://{HOST}:{PORT}")
+    print(f"TMDB Gateway : https://{tmdb_host}")
+    print("Endpoint     :")
     print("  [UI & Core]")
     print("  - GET  /              (Dashboard UI)")
     print("  - GET  /assets/*      (Static Assets)")

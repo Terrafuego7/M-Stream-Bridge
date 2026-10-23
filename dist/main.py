@@ -25,7 +25,7 @@ from urllib.error import HTTPError, URLError
 import webbrowser
 from core.capture_engine import CaptureEngineMixin, _clear_manual_pin_if_stream_changed_unlocked, _is_bridge_local_url
 from core.cloudflare import _CF_COOKIES, _set_cookie_header, _set_ua_header, _solve_cloudflare_turnstile
-from core.config import ensure_config_exists, get_config_path, load_jimaku_api_key, load_subdl_api_key, load_subdl_languages, load_tmdb_api_key
+from core.config import get_tmdb_endpoint, ensure_config_exists, get_config_path, load_jimaku_api_key, load_subdl_api_key, load_subdl_languages, load_tmdb_api_key
 from core.hls_proxy import HlsProxyMixin
 from core.state import CAPTURE_TAB_META_TTL_SEC, HOST, LOG_BUFFER, LOG_LEVEL, LOG_LOCK, LOG_PREFIX, LOG_TOTAL_COUNT, MAX_BODY_BYTES, MAX_CAPTURE_CANDIDATES, MAX_CAPTURE_TAB_META, MAX_LOG_ENTRIES, MAX_MANUAL_SUBTITLE_CANDIDATES, MAX_URL_HEADER_MAP, MAX_URL_HEADER_MAP_PER_HOST, PORT, SEGMENT_521_RETRY_ATTEMPTS, SEGMENT_521_RETRY_DELAY_SEC, SEGMENT_TRANSIENT_RETRY_ATTEMPTS, SEGMENT_TRANSIENT_RETRY_DELAY_SEC, STATE_LOCK, capture_active_state, capture_candidates, capture_tab_meta, current_stream, manual_subtitle_candidates, manual_subtitle_pin, srt_store
 from subtitle_providers.jimaku import JimakuBridge, _is_subtitle_like_url, _stream_key
@@ -1615,9 +1615,16 @@ def run_server() -> None:
     print('=' * 72)
     print('M-Stream Bridge v3.0.4')
     print('=' * 72)
-    print(f'Dashboard  : http://{HOST}:{PORT}')
-    print(f'Bridge API : http://{HOST}:{PORT}')
-    print('Endpoint   :')
+    try:
+        from core.config import get_tmdb_endpoint
+        tmdb_url, _ = get_tmdb_endpoint('')
+        tmdb_host = urllib.parse.urlparse(tmdb_url).netloc
+    except Exception:
+        tmdb_host = 'm-stream-tmdb.zielzy.my.id'
+    print(f'Dashboard    : http://{HOST}:{PORT}')
+    print(f'Bridge API   : http://{HOST}:{PORT}')
+    print(f'TMDB Gateway : https://{tmdb_host}')
+    print('Endpoint     :')
     print('  [UI & Core]')
     print('  - GET  /              (Dashboard UI)')
     print('  - GET  /assets/*      (Static Assets)')

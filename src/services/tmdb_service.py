@@ -10,6 +10,7 @@ TMDB Metadata & Artwork Fetching Service for M-Stream Bridge.
 """
 
 from __future__ import annotations
+import urllib.parse
 
 from collections.abc import Callable
 import queue
@@ -18,7 +19,7 @@ from typing import Any
 
 import requests
 
-from core.config import load_tmdb_api_key
+from core.config import load_tmdb_api_key, get_tmdb_endpoint
 from utils.tmdb_search import generate_tmdb_queries, tmdb_search
 
 
@@ -107,7 +108,9 @@ class TMDBService:
                     tmdb_data["backdrop"] = best_item.get("backdrop_path") or best_item.get("poster_path")
                     tmdb_data["media_type"] = best_item.get("media_type")
                     tmdb_data["id"] = best_item.get("id")
-                    self._log("INFO", f"[TMDB] Artwork found for {title!r} -> id={best_item.get('id')}")
+                    gw_url, _ = get_tmdb_endpoint("")
+                    gw_host = urllib.parse.urlparse(gw_url).netloc or "m-stream-tmdb.zielzy.my.id"
+                    self._log("INFO", f"[TMDB] Artwork resolved via https://{gw_host} for {title!r} -> id={best_item.get('id')}")
                 else:
                     self._log("DEBUG", f"[TMDB] No artwork found for {title!r}")
 
