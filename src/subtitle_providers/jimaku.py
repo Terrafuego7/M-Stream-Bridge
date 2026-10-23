@@ -25,7 +25,7 @@ except ImportError:
     _requests = None
     REQUESTS_AVAILABLE = False
 
-from core.config import get_config_path, load_tmdb_api_key
+from core.config import get_config_path, load_tmdb_api_key, get_tmdb_endpoint
 from core.state import STATE_LOCK, current_stream, manual_subtitle_pin, srt_store
 from utils.title_parser import SITES_RE, clean_media_title
 
@@ -652,9 +652,6 @@ class JimakuBridge:
             return []
 
         tmdb_api_key = load_tmdb_api_key()
-        if not tmdb_api_key:
-            LOGGER.warning("[JIMAKU] tmdb_api_key not found, skipping alias fetching")
-            return []
 
         global_best_item = None
         global_best_score = 0.0
@@ -674,9 +671,14 @@ class JimakuBridge:
                 continue
 
             try:
+                search_url, search_params = get_tmdb_endpoint("search/multi")
+                req_params = dict(search_params)
+                req_params.update({"query": search_query, "include_adult": "false"})
+                if tmdb_api_key and "api_key" not in req_params:
+                    req_params["api_key"] = tmdb_api_key
                 resp = self._session.get(
-                    "https://api.themoviedb.org/3/search/multi",
-                    params={"query": search_query, "api_key": tmdb_api_key, "include_adult": "false"},
+                    search_url,
+                    params=req_params,
                     timeout=10,
                 )
             except Exception:
@@ -715,9 +717,13 @@ class JimakuBridge:
                     media_type = item.get("media_type")
                     if tmdb_id and media_type:
                         try:
+                            aka_url, aka_params = get_tmdb_endpoint(f"{media_type}/{tmdb_id}/alternative_titles")
+                            req_aka_params = dict(aka_params)
+                            if tmdb_api_key and "api_key" not in req_aka_params:
+                                req_aka_params["api_key"] = tmdb_api_key
                             aka_resp = self._session.get(
-                                f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/alternative_titles",
-                                params={"api_key": tmdb_api_key},
+                                aka_url,
+                                params=req_aka_params,
                                 timeout=10,
                             )
                             if aka_resp.status_code < 400:

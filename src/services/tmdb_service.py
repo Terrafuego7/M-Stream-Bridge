@@ -57,7 +57,7 @@ class TMDBService:
         title = stream_obj.get("display_title")
         stream_id = str(stream_obj.get("id") or "current_stream")
 
-        if not title or not self.api_key:
+        if not title:
             return
 
         self.latest_tasks[stream_id] = title

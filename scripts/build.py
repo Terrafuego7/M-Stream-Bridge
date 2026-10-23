@@ -342,7 +342,7 @@ def sync_build() -> None:
 
     config_path = os.path.join(DIST_DIR, "core", "config.py")
     if os.path.exists(config_path):
-        obfuscate_tmdb_api_key(config_path)
+        pass
 
     for root, dirs, files in os.walk(DIST_DIR):
         if ".git" in dirs:

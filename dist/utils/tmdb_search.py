@@ -6,6 +6,7 @@
 # @homepage    https://github.com/Zielzy/M-Stream-Bridge
 # ==/M-Stream Bridge==
 from __future__ import annotations
+from core.config import get_tmdb_endpoint
 import re
 from typing import Any
 import requests
@@ -23,12 +24,17 @@ def generate_tmdb_queries(title: str) -> list[str]:
         queries.append(base_title)
     return queries
 
-def tmdb_search(session: requests.Session, api_key: str, queries: list[str]) -> list[dict[str, Any]]:
+def tmdb_search(session: requests.Session, api_key: str | None, queries: list[str]) -> list[dict[str, Any]]:
     for q in queries:
         if not q:
             continue
         try:
-            resp = session.get('https://api.themoviedb.org/3/search/multi', params={'query': q, 'api_key': api_key, 'include_adult': 'false'}, timeout=10)
+            url, params = get_tmdb_endpoint('search/multi')
+            req_params = dict(params)
+            req_params.update({'query': q, 'include_adult': 'false'})
+            if api_key and 'api_key' not in req_params:
+                req_params['api_key'] = api_key
+            resp = session.get(url, params=req_params, timeout=10)
             if resp.status_code == 200:
                 results = resp.json().get('results', [])
                 valid = [item for item in results if isinstance(item, dict) and item.get('media_type') in ('movie', 'tv')]

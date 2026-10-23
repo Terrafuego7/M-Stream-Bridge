@@ -10,6 +10,7 @@ TMDB Search Query Helpers for Multi-Search Metadata Resolution.
 """
 
 from __future__ import annotations
+from core.config import get_tmdb_endpoint
 
 import re
 from typing import Any
@@ -46,7 +47,7 @@ def generate_tmdb_queries(title: str) -> list[str]:
 
 def tmdb_search(
     session: requests.Session,
-    api_key: str,
+    api_key: str | None,
     queries: list[str],
 ) -> list[dict[str, Any]]:
     """
@@ -58,9 +59,14 @@ def tmdb_search(
         if not q:
             continue
         try:
+            url, params = get_tmdb_endpoint("search/multi")
+            req_params = dict(params)
+            req_params.update({"query": q, "include_adult": "false"})
+            if api_key and "api_key" not in req_params:
+                req_params["api_key"] = api_key
             resp = session.get(
-                "https://api.themoviedb.org/3/search/multi",
-                params={"query": q, "api_key": api_key, "include_adult": "false"},
+                url,
+                params=req_params,
                 timeout=10,
             )
             if resp.status_code == 200:

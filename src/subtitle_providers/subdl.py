@@ -23,7 +23,7 @@ try:
 except ImportError:
     _requests = None
 
-from core.config import load_subdl_languages, load_tmdb_api_key
+from core.config import load_subdl_languages, load_tmdb_api_key, get_tmdb_endpoint
 from subtitle_providers.jimaku import JimakuBridge
 
 
@@ -55,25 +55,26 @@ class SubdlProvider:
         tmdb_id: int | None = None
         is_tv: bool = True
 
-        if tmdb_api_key:
-            url = "https://api.themoviedb.org/3/search/multi"
-            params = {
-                "api_key": tmdb_api_key,
-                "query": clean_query,
-                "page": 1,
-                "include_adult": "true",
-            }
-            try:
-                r = _requests.get(url, params=params, timeout=10)
-                if r.status_code == 200:
-                    results = r.json().get("results", [])
-                    valid = [res for res in results if res.get("media_type") in ("tv", "movie")]
-                    valid.sort(key=lambda x: x.get("popularity", 0), reverse=True)
-                    if valid:
-                        tmdb_id = valid[0].get("id")
-                        is_tv = valid[0].get("media_type") == "tv"
-            except Exception:
-                pass
+        url, params = get_tmdb_endpoint("search/multi")
+        req_params = dict(params)
+        req_params.update({
+            "query": clean_query,
+            "page": 1,
+            "include_adult": "true",
+        })
+        if tmdb_api_key and "api_key" not in req_params:
+            req_params["api_key"] = tmdb_api_key
+        try:
+            r = _requests.get(url, params=req_params, timeout=10)
+            if r.status_code == 200:
+                results = r.json().get("results", [])
+                valid = [res for res in results if res.get("media_type") in ("tv", "movie")]
+                valid.sort(key=lambda x: x.get("popularity", 0), reverse=True)
+                if valid:
+                    tmdb_id = valid[0].get("id")
+                    is_tv = valid[0].get("media_type") == "tv"
+        except Exception:
+            pass
 
         if not tmdb_id:
             raise ValueError("Could not find IMDB ID for the title")

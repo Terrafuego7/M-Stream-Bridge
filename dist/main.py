@@ -1020,9 +1020,6 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
             self._send_json(400, {'status': 'error', 'message': 'title is empty'}, allow_cors=True)
             return
         tmdb_api_key = load_tmdb_api_key()
-        if not tmdb_api_key:
-            self._send_json(200, {'coverUrl': '', 'bannerUrl': ''}, allow_cors=True)
-            return
         try:
             if BridgeProxyHandler._session is None:
                 BridgeProxyHandler._session = _requests.Session()

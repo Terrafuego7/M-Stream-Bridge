@@ -101,9 +101,26 @@ def _load_dotenv() -> None:
             break
 
 def load_tmdb_api_key() -> str:
-    encrypted = [147, 193, 197, 150, 196, 194, 147, 193, 199, 196, 192, 196, 151, 193, 198, 202, 203, 194, 198, 202, 144, 150, 147, 151, 147, 198, 151, 148, 193, 145, 202, 198]
-    xor_key = 242
-    return bytes((value ^ xor_key for value in encrypted)).decode('utf-8')
+    _load_dotenv()
+    env_key = str(os.environ.get('TMDB_API_KEY') or '').strip()
+    if env_key:
+        return env_key
+    payload = _load_config_dict()
+    return str(payload.get('tmdb_api_key') or '').strip()
+DEFAULT_TMDB_GATEWAY_URL: str = 'https://m-stream-tmdb.zielzy.my.id/3'
+TMDB_OFFICIAL_API_BASE: str = 'https://api.themoviedb.org/3'
+
+def get_tmdb_endpoint(endpoint_path: str) -> tuple[str, dict[str, str]]:
+    clean_path = endpoint_path.strip('/')
+    if clean_path.startswith('3/'):
+        clean_path = clean_path[2:]
+    user_key = load_tmdb_api_key()
+    if user_key:
+        return (f'{TMDB_OFFICIAL_API_BASE}/{clean_path}', {'api_key': user_key})
+    gateway_base = (os.environ.get('TMDB_GATEWAY_URL') or DEFAULT_TMDB_GATEWAY_URL).rstrip('/')
+    if not gateway_base.endswith('/3'):
+        gateway_base = f'{gateway_base}/3'
+    return (f'{gateway_base}/{clean_path}', {})
 
 def ensure_config_exists() -> None:
     config_path = get_config_path()

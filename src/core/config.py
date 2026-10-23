@@ -149,6 +149,30 @@ def load_tmdb_api_key() -> str:
     return str(payload.get("tmdb_api_key") or "").strip()
 
 
+DEFAULT_TMDB_GATEWAY_URL: str = "https://m-stream-tmdb.zielzy.my.id/3"
+TMDB_OFFICIAL_API_BASE: str = "https://api.themoviedb.org/3"
+
+
+def get_tmdb_endpoint(endpoint_path: str) -> tuple[str, dict[str, str]]:
+    """
+    Resolve target URL and query parameters for TMDB endpoints.
+    Uses official TMDB API if user provides local key, otherwise routes
+    through the Cloudflare Worker edge-caching gateway.
+    """
+    clean_path = endpoint_path.strip("/")
+    if clean_path.startswith("3/"):
+        clean_path = clean_path[2:]
+
+    user_key = load_tmdb_api_key()
+    if user_key:
+        return f"{TMDB_OFFICIAL_API_BASE}/{clean_path}", {"api_key": user_key}
+
+    gateway_base = (os.environ.get("TMDB_GATEWAY_URL") or DEFAULT_TMDB_GATEWAY_URL).rstrip("/")
+    if not gateway_base.endswith("/3"):
+        gateway_base = f"{gateway_base}/3"
+    return f"{gateway_base}/{clean_path}", {}
+
+
 def ensure_config_exists() -> None:
     """Ensure the user configuration file exists on disk, initializing with empty JSON if absent."""
     config_path = get_config_path()

@@ -41,7 +41,7 @@ class TMDBService:
     def request_artwork(self, stream_obj: dict[str, Any]) -> None:
         title = stream_obj.get('display_title')
         stream_id = str(stream_obj.get('id') or 'current_stream')
-        if not title or not self.api_key:
+        if not title:
             return
         self.latest_tasks[stream_id] = title
         self.queue.put((stream_obj, title, stream_id))
