@@ -33,6 +33,8 @@ Core Server Architecture & Workflow:
 
 from __future__ import annotations
 
+BRIDGE_VERSION = "__VERSION__"
+
 import datetime
 import hashlib
 import http.server
@@ -201,17 +203,43 @@ def _open_dashboard() -> None:
         print(f"[BRIDGE] dashboard open failed: {exc}")
 
 
-def _bridge_health_ok(timeout: float = 0.75) -> bool:
+def _bridge_health_status(timeout: float = 0.75) -> dict[str, Any] | None:
     try:
         with urllib.request.urlopen(_health_url(), timeout=timeout) as resp:
             status = getattr(resp, "status", 200)
             if status < 200 or status >= 300:
-                return False
+                return None
             raw = resp.read(4096)
         payload = json.loads(raw.decode("utf-8", errors="replace") or "{}")
-        return payload.get("status") == "ok" and payload.get("service") == "bridge_proxy"
+        if payload.get("status") == "ok" and payload.get("service") == "bridge_proxy":
+            return payload
+        return None
     except Exception:
-        return False
+        return None
+
+
+def _bridge_health_ok(timeout: float = 0.75) -> bool:
+    return _bridge_health_status(timeout=timeout) is not None
+
+
+def _shutdown_remote_bridge(timeout: float = 2.0) -> bool:
+    try:
+        req = urllib.request.Request(
+            f"http://{HOST}:{PORT}/api/shutdown",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            pass
+    except Exception:
+        pass
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _bridge_health_ok(timeout=0.2):
+            return True
+        time.sleep(0.1)
+    return not _bridge_health_ok(timeout=0.2)
 
 
 def _show_startup_error(message: str) -> None:
@@ -1142,7 +1170,7 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
             self._handle_assets(path)
             return
         if path == "/health":
-            self._send_json(200, {"status": "ok", "service": "bridge_proxy"})
+            self._send_json(200, {"status": "ok", "service": "bridge_proxy", "version": BRIDGE_VERSION})
             return
         if path == "/api/current-stream":
             self._handle_current_stream()
@@ -2180,9 +2208,14 @@ def run_server() -> None:
     ensure_config_exists()
     dashboard_url = _dashboard_url()
 
-    if _bridge_health_ok():
-        _open_dashboard()
-        return
+    running_status = _bridge_health_status()
+    if running_status is not None:
+        if running_status.get("version") != BRIDGE_VERSION:
+            print(f"[BRIDGE] detected active bridge with different version, requesting shutdown...")
+            _shutdown_remote_bridge(timeout=2.0)
+        else:
+            _open_dashboard()
+            return
 
     try:
         server = QuietThreadingHTTPServer((HOST, PORT), BridgeProxyHandler)
