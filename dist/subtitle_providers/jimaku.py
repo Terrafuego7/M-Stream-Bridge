@@ -39,6 +39,7 @@ def _stream_key(title: Any, stream_url: Any) -> str:
 class JimakuBridge:
     ROMAJI_SEASON_MAP: dict[str, int] = {'ichi': 1, 'ni': 2, 'san': 3, 'yon': 4, 'go': 5, 'roku': 6, 'nana': 7, 'hachi': 8, 'kyuu': 9, 'juu': 10}
     ROMAJI_SEASON_PATTERN: re.Pattern[str] = re.compile('\\b(ichi|ni|san|yon|go|roku|nana|hachi|kyuu|juu)\\s*[- ]?no\\s*[- ]?shou\\b', re.IGNORECASE)
+    STANDALONE_NOISE_RE: re.Pattern[str] = re.compile('^(?:comments?|discussions?|(?:ep|episode)\\.?\\s*\\d+)$', re.IGNORECASE)
     _TECHNICAL_STREAM_PREFIXES: tuple[str, ...] = ('stream', 'index', 'chunk', 'segment', 'seg', 'video', 'audio', 'track', 'part', 'master', 'playlist', 'manifest', 'rendition', 'media', 'frag', 'init')
 
     def __init__(self, api_key: str, proxy_base_url: str='http://127.0.0.1:7000', poll_interval_sec: int=5) -> None:
@@ -229,7 +230,8 @@ class JimakuBridge:
             external_search_queries = []
             for q in query_candidates[:4]:
                 if len(q) < 50 and q not in external_search_queries:
-                    external_search_queries.append(q)
+                    if not self.STANDALONE_NOISE_RE.match(q.strip()):
+                        external_search_queries.append(q)
             for tc in title_candidates or []:
                 tc_str = ''
                 if isinstance(tc, str):
@@ -238,7 +240,8 @@ class JimakuBridge:
                     tc_str = str(tc.get('value') or tc.get('title') or '')
                 if tc_str and len(tc_str) > 2 and (tc_str not in external_search_queries):
                     if not re.search('(?i)\\b(watch|free|online|stream|download|hd|subbed|dubbed)\\b', tc_str):
-                        external_search_queries.append(tc_str)
+                        if not self.STANDALONE_NOISE_RE.match(tc_str.strip()):
+                            external_search_queries.append(tc_str)
             external_aliases = self._search_external_title_aliases(external_search_queries, validation_title=clean_title)
             if external_aliases:
                 if not try_queries(external_aliases, '[JIMAKU] external alias matched: %s'):
@@ -405,6 +408,8 @@ class JimakuBridge:
             if not search_query:
                 search_query = query
             if len(search_query) < 2:
+                continue
+            if self.STANDALONE_NOISE_RE.match(search_query.strip()):
                 continue
             try:
                 search_url, search_params = get_tmdb_endpoint('search/multi')

@@ -19,6 +19,7 @@
     function cleanTitleCandidate(text) {
         return String(text || "").replace(/\s+/g, " ").trim();
     }
+    const STANDALONE_NOISE_RE = /^(?:comments?|discussions?|(?:ep|episode)\.?\s*\d+)$/i;
     function buildMeta() {
         const pageUrl = location.href || "", title = document.title || "", {kind: pageKind, reason: pageReason} = function() {
             const pathname = location.pathname || "";
@@ -69,6 +70,7 @@
             function add(value, source = "unknown") {
                 const cleaned = cleanTitleCandidate(value);
                 if (!cleaned || cleaned.length < 2 || cleaned.length > 180) return;
+                if (STANDALONE_NOISE_RE.test(cleaned)) return;
                 const key = `${cleaned.toLowerCase()}::${source}`;
                 seen.has(key) || (seen.add(key), out.push({
                     value: cleaned,

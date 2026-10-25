@@ -100,7 +100,8 @@ UI_NOISE_RE: re.Pattern[str] = re.compile(
     r"recommended(?:\s+for\s+you)?|top\s+picks|top\s+10|latest|recently\s+(?:added|released)|favourit?es|"
     r"library|dashboard|discover|live\s+tv|downloads|search|settings|home|movies?|series|browse|collections?|my\s+media|"
     r"okay-ish\s+anime\s+website|anime\s+community\s+embed|embed\s+widget|just\s+a\s+moment(?:\.\.\.)?|"
-    r"checking\s+your\s+browser.*|movies?\s*/\s*tv\s*/\s*anime|freemediaheckyeah|video\s+player|get\s+\w+\s+on\s+your\s+devices?)$",
+    r"checking\s+your\s+browser.*|movies?\s*/\s*tv\s*/\s*anime|freemediaheckyeah|video\s+player|get\s+\w+\s+on\s+your\s+devices?|"
+    r"comments?|discussions?)$",
     re.IGNORECASE,
 )
 

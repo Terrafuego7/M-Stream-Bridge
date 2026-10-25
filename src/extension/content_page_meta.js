@@ -64,6 +64,9 @@
   // 2. DOM Scrapers & Title Candidate Extractor
   // ==========================================================================
 
+  // Standalone noise terms that should never be treated as media title candidates
+  const STANDALONE_NOISE_RE = /^(?:comments?|discussions?|(?:ep|episode)\.?\s*\d+)$/i;
+
   /**
    * Collects title candidates from document title, meta tags, headings, JSON-LD, and URL slugs.
    * @returns {Array<{value: string, source: string}>} Array of scored candidate objects.
@@ -75,6 +78,7 @@
     function add(value, source = "unknown") {
       const cleaned = cleanTitleCandidate(value);
       if (!cleaned || cleaned.length < 2 || cleaned.length > 180) return;
+      if (STANDALONE_NOISE_RE.test(cleaned)) return;
       const key = `${cleaned.toLowerCase()}::${source}`;
       if (seen.has(key)) return;
       seen.add(key);
