@@ -1,6 +1,6 @@
 // ==M-Stream Bridge==
 // @name        M-Stream Bridge
-// @version     3.0.6
+// @version     3.0.7
 // @author      Zielzy
 // @description Local bridge for non-DRM browser streams and Migaku Player.
 // @homepage    https://github.com/Zielzy/M-Stream-Bridge
@@ -13,7 +13,76 @@ self.addEventListener("install", () => {
 
 import "./shared/utils.js";
 
-const {parseEpisodeFromText: parseEpisodeFromText, parseSeasonFromText: parseSeasonFromText, extractEpisodeFromUrl: extractEpisodeFromUrl} = globalThis.BridgeUtils, BRIDGE_ORIGIN = "http://127.0.0.1:7000", CAPTURE_ENDPOINT = `${BRIDGE_ORIGIN}/capture-request`, CAPTURE_EVENT_ENDPOINT = `${BRIDGE_ORIGIN}/capture-event`, SET_STREAM_ENDPOINT = `${BRIDGE_ORIGIN}/set-stream`, LOG_PREFIX = "[BRIDGE-EXT]", LOG_LEVEL = "info", DEFAULT_MIGAKU_EXTENSION_ID = "dmeppfcidcpcocleneopiblmpnbokhep", MIGAKU_PLAYER_PATH = "/pages/player/index.html", MAX_HEADER_VALUE_LEN = 4096, MAX_CACHE_SIZE = 2e3, MAX_COOLDOWN_KEYS = 1e3, STREAM_SET_COOLDOWN_HLS_MS = 3e4, STREAM_SET_COOLDOWN_DIRECT_MS = 15e3, STREAM_SET_COOLDOWN_TAB_MS = 3e3, AUTO_STREAM_TYPES = new Set([ "hls", "direct" ]), ALLOWED_REQUEST_TYPES = new Set([ "media", "xmlhttprequest", "fetch", "sub_frame", "object" ]), TAB_RECENT_TTL_MS = 3e5, TAB_SWITCH_SET_COOLDOWN_MS = 3e3, TAB_META_TTL_MS = 6e5, MAX_CANDIDATES_PER_TAB = 8, MAX_TAB_STATE_ENTRIES = 200, RESPONSE_STREAM_CONTENT_TYPES = new Set([ "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/octet-stream", "video/mp4", "video/webm", "video/MP2T", "video/iso.segment", "video/x-m4v" ]), requestCache = new Map, lastSetByKey = new Map, tabRecentPrimary = new Map, tabPageMeta = new Map;
+const {parseEpisodeFromText: parseEpisodeFromText, parseSeasonFromText: parseSeasonFromText, extractEpisodeFromUrl: extractEpisodeFromUrl} = globalThis.BridgeUtils, BRIDGE_ORIGIN = "http://127.0.0.1:7000", CAPTURE_ENDPOINT = `${BRIDGE_ORIGIN}/capture-request`, CAPTURE_EVENT_ENDPOINT = `${BRIDGE_ORIGIN}/capture-event`, SET_STREAM_ENDPOINT = `${BRIDGE_ORIGIN}/set-stream`, RTP_RESOLVE_ENDPOINT = `${BRIDGE_ORIGIN}/api/resolve-rtp`, LOG_PREFIX = "[BRIDGE-EXT]", LOG_LEVEL = "info", DEFAULT_MIGAKU_EXTENSION_ID = "dmeppfcidcpcocleneopiblmpnbokhep", MIGAKU_PLAYER_PATH = "/pages/player/index.html", MAX_HEADER_VALUE_LEN = 4096, MAX_CACHE_SIZE = 2e3, MAX_COOLDOWN_KEYS = 1e3, STREAM_SET_COOLDOWN_HLS_MS = 3e4, STREAM_SET_COOLDOWN_DIRECT_MS = 15e3, STREAM_SET_COOLDOWN_TAB_MS = 3e3, AUTO_STREAM_TYPES = new Set([ "hls", "direct" ]), ALLOWED_REQUEST_TYPES = new Set([ "media", "xmlhttprequest", "fetch", "sub_frame", "object" ]), TAB_RECENT_TTL_MS = 3e5, TAB_SWITCH_SET_COOLDOWN_MS = 3e3, TAB_META_TTL_MS = 6e5, MAX_CANDIDATES_PER_TAB = 8, MAX_TAB_STATE_ENTRIES = 200, RESPONSE_STREAM_CONTENT_TYPES = new Set([ "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/octet-stream", "video/mp4", "video/webm", "video/MP2T", "video/iso.segment", "video/x-m4v" ]), requestCache = new Map, lastSetByKey = new Map, tabRecentPrimary = new Map, tabPageMeta = new Map, rtpResolveState = new Map;
+
+function isRtpEpisodePage(value) {
+    try {
+        const url = new URL(value);
+        return "https:" === url.protocol && ("rtp.pt" === url.hostname || "www.rtp.pt" === url.hostname) && /^\/play\/(?:[^/]+\/)?p\d+\/e\d+(?:\/|$)/.test(url.pathname);
+    } catch (_err) {
+        return !1;
+    }
+}
+
+function isRtpTabRequest(tabId, pageUrl) {
+    return isRtpEpisodePage(pageUrl) || isRtpEpisodePage(tabPageMeta.get(tabId)?.page_url);
+}
+
+async function resolveRtpTab(tabId, pageUrl) {
+    if (tabId < 0 || !isRtpEpisodePage(pageUrl)) return;
+    const previous = rtpResolveState.get(tabId);
+    if (!(previous?.pageUrl === pageUrl && Date.now() - previous.at < (previous.ok ? 12e4 : 3e4))) {
+        rtpResolveState.set(tabId, {
+            pageUrl: pageUrl,
+            at: Date.now(),
+            ok: !1
+        });
+        try {
+            const response = await fetch(RTP_RESOLVE_ENDPOINT, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    page_url: pageUrl
+                })
+            });
+            if (!response.ok) return void logInfo("RTP resolution unavailable", response.status);
+            const result = await response.json();
+            if ("ok" !== result.status || "hls" !== inferStreamType(result.stream_url) || !result.stream_url?.startsWith("https://streaming-vod.rtp.pt/hls/")) return;
+            if ((await chrome.tabs.get(tabId)).url !== pageUrl) return;
+            const headers = result.request_headers || {}, payload = buildPayload({
+                url: result.stream_url,
+                tabId: tabId,
+                type: "xmlhttprequest",
+                method: "GET",
+                initiator: pageUrl,
+                requestHeaders: Object.entries(headers).map(([name, value]) => ({
+                    name: name,
+                    value: value
+                }))
+            }), body = await buildSetStreamPayload({
+                tabId: tabId,
+                initiator: pageUrl,
+                documentUrl: pageUrl
+            }, payload, "hls");
+            if (body.title = result.title || body.title, body.hls_master_url = result.stream_url, 
+            body.capture_source = "rtp_resolver", body.capture_stage = "validated_manifest_and_segment", 
+            body.capture_timestamp = Date.now(), rememberTabPrimaryCandidate({
+                tabId: tabId,
+                initiator: pageUrl,
+                documentUrl: pageUrl
+            }, payload, "hls"), (activeTabId < 0 || activeTabId === tabId) && !await postSetStream(body)) return;
+            rtpResolveState.set(tabId, {
+                pageUrl: pageUrl,
+                at: Date.now(),
+                ok: !0
+            }), logInfo("RTP HLS verified", result.height);
+        } catch (err) {
+            logInfo("RTP resolution failed", String(err));
+        }
+    }
+}
 
 let activeTabId = -1;
 
@@ -253,10 +322,10 @@ async function postSetStream(payload) {
             body: JSON.stringify(payload),
             keepalive: !0
         });
-        if (!resp.ok) return void logDebug("set-stream rejected", resp.status, payload.stream_url);
-        logInfo("set-stream ok", payload.stream_type, payload.stream_url, `s=${payload.season || "-"} ep=${payload.episode || "-"}`);
+        return resp.ok ? (logInfo("set-stream ok", payload.stream_type, payload.stream_url, `s=${payload.season || "-"} ep=${payload.episode || "-"}`), 
+        !0) : (logDebug("set-stream rejected", resp.status, payload.stream_url), !1);
     } catch (err) {
-        logDebug("set-stream unavailable", String(err));
+        return logDebug("set-stream unavailable", String(err)), !1;
     }
 }
 
@@ -579,7 +648,8 @@ async function handleRuntimeMessage(message, sender) {
                     episode: episode,
                     season: season,
                     at: Date.now()
-                }), trimTabMeta(), logDebug("page meta updated", tabId, tabPageMeta.get(tabId))) : logDebug("page meta skipped (iframe)", tabId, title), 
+                }), trimTabMeta(), logDebug("page meta updated", tabId, tabPageMeta.get(tabId)), 
+                isRtpEpisodePage(page_url) && resolveRtpTab(tabId, page_url)) : logDebug("page meta skipped (iframe)", tabId, title), 
                 postCaptureEvent({
                     event_type: "page_meta",
                     tab_id: tabId,
@@ -601,7 +671,11 @@ async function handleRuntimeMessage(message, sender) {
         }
         if ("bridge_open_migaku_player" === message.type || "open_migaku_player" === message.type) return await openMigakuPlayer();
         if ("bridge_ext_page_hook" === message.type) {
-            const tabId = Number(sender?.tab?.id ?? -1), streamType = inferStreamType(message.url);
+            const tabId = Number(sender?.tab?.id ?? -1);
+            if (isRtpTabRequest(tabId, message.pageUrl)) return {
+                ok: !1
+            };
+            const streamType = inferStreamType(message.url);
             if ("other" === streamType) return logInfo("DOM HOOK rejected (not a stream)", message.url), 
             {
                 ok: !1
@@ -647,7 +721,7 @@ function isNewerVersion(candidate, current) {
 
 async function checkUpstreamUpdate() {
     try {
-        const currentVersion = chrome.runtime.getManifest()?.version || "3.0.6", cached = await chrome.storage.local.get([ "upstreamVersion", "downloadUrl", "lastUpdateCheck" ]), now = Date.now();
+        const currentVersion = chrome.runtime.getManifest()?.version || "3.0.7", cached = await chrome.storage.local.get([ "upstreamVersion", "downloadUrl", "lastUpdateCheck" ]), now = Date.now();
         let version = cached?.upstreamVersion;
         if (!version || now - (cached?.lastUpdateCheck || 0) > 432e5) {
             const resp = await fetch("https://raw.githubusercontent.com/Zielzy/M-Stream-Bridge/main/index.min.json", {
@@ -673,6 +747,7 @@ async function checkUpstreamUpdate() {
 }
 
 chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
+    if (isRtpTabRequest(Number(details?.tabId ?? -1), details?.initiator || details?.documentUrl)) return;
     if (!isAllowedRequestType(details?.type)) return;
     if (!isInterestingUrl(details?.url)) return;
     if (isSegmentLikeUrl(details?.url)) return;
@@ -693,6 +768,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
 }, {
     urls: [ "<all_urls>" ]
 }, [ "requestHeaders", "extraHeaders" ]), chrome.webRequest.onCompleted.addListener(async details => {
+    if (isRtpTabRequest(Number(details?.tabId ?? -1), details?.initiator || details?.documentUrl)) return;
     const url = details?.url || "";
     if (!url) return;
     if (isBridgeLocalUrl(url)) return;
@@ -752,13 +828,13 @@ chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
 }, {
     urls: [ "<all_urls>" ]
 }, [ "responseHeaders", "extraHeaders" ]), chrome.runtime.onInstalled.addListener(() => {
-    logInfo("installed", "v3.0.6"), checkUpstreamUpdate();
+    logInfo("installed", "v3.0.7"), checkUpstreamUpdate();
 }), chrome.runtime.onStartup.addListener(() => {
     checkUpstreamUpdate();
 }), chrome.tabs.onActivated.addListener(async activeInfo => {
     activeTabId = Number(activeInfo?.tabId ?? -1), await maybeSetStreamForActiveTab(activeTabId);
 }), chrome.tabs.onRemoved.addListener(tabId => {
-    tabRecentPrimary.delete(tabId), tabPageMeta.delete(tabId);
+    rtpResolveState.delete(tabId), tabRecentPrimary.delete(tabId), tabPageMeta.delete(tabId);
 }), chrome.tabs.query({
     active: !0,
     currentWindow: !0

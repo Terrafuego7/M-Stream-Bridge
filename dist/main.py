@@ -1,12 +1,12 @@
 # ==M-Stream Bridge==
 # @name        M-Stream Bridge
-# @version     3.0.6
+# @version     3.0.7
 # @author      Zielzy
 # @description Local bridge for non-DRM browser streams and Migaku Player.
 # @homepage    https://github.com/Zielzy/M-Stream-Bridge
 # ==/M-Stream Bridge==
 from __future__ import annotations
-BRIDGE_VERSION = '3.0.6'
+BRIDGE_VERSION = '3.0.7'
 import datetime
 import hashlib
 import http.server
@@ -28,6 +28,7 @@ from core.capture_engine import CaptureEngineMixin, _clear_manual_pin_if_stream_
 from core.cloudflare import _CF_COOKIES, _set_cookie_header, _set_ua_header, _solve_cloudflare_turnstile
 from core.config import get_tmdb_endpoint, ensure_config_exists, get_config_path, load_jimaku_api_key, load_subdl_api_key, load_subdl_languages, load_tmdb_api_key
 from core.hls_proxy import HlsProxyMixin
+from core.rtp_resolver import RTPResolveError, episode_ids, extract_format, validate_playback
 from core.state import CAPTURE_TAB_META_TTL_SEC, HOST, LOG_BUFFER, LOG_LEVEL, LOG_LOCK, LOG_PREFIX, LOG_TOTAL_COUNT, MAX_BODY_BYTES, MAX_CAPTURE_CANDIDATES, MAX_CAPTURE_TAB_META, MAX_LOG_ENTRIES, MAX_MANUAL_SUBTITLE_CANDIDATES, MAX_URL_HEADER_MAP, MAX_URL_HEADER_MAP_PER_HOST, PORT, SEGMENT_521_RETRY_ATTEMPTS, SEGMENT_521_RETRY_DELAY_SEC, SEGMENT_TRANSIENT_RETRY_ATTEMPTS, SEGMENT_TRANSIENT_RETRY_DELAY_SEC, STATE_LOCK, capture_active_state, capture_candidates, capture_tab_meta, current_stream, manual_subtitle_candidates, manual_subtitle_pin, srt_store
 from subtitle_providers.jimaku import JimakuBridge, _is_subtitle_like_url, _stream_key
 from subtitle_providers.subdl import SubdlProvider
@@ -803,6 +804,9 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
         self.end_headers()
 
     def do_POST(self) -> None:
+        if self.path == '/api/resolve-rtp':
+            self._handle_resolve_rtp()
+            return
         if self.path == '/set-stream':
             self._handle_set_stream()
             return
@@ -846,6 +850,26 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
             self._handle_shutdown()
             return
         self._send_json(404, {'status': 'error', 'message': 'Not found'})
+
+    def _handle_resolve_rtp(self) -> None:
+        try:
+            data = self._read_json_body()
+            page_url = str(data.get('page_url') or '')
+            if not episode_ids(page_url):
+                self._send_json(400, {'status': 'error', 'message': 'Invalid RTP episode URL'})
+                return
+            resolved = extract_format(page_url)
+            headers = dict(resolved['headers'])
+            headers['referer'] = page_url
+            headers['origin'] = 'https://www.rtp.pt'
+            validate_playback(resolved['url'], headers, self._perform_urlopen)
+            self._send_json(200, {'status': 'ok', 'stream_url': resolved['url'], 'request_headers': resolved['headers'], 'title': resolved['title'], 'height': resolved['height']}, allow_cors=True)
+        except RTPResolveError as exc:
+            self._log('WARN', f'RTP resolution rejected: {exc}')
+            self._send_json(422, {'status': 'error', 'message': str(exc)}, allow_cors=True)
+        except Exception as exc:
+            self._log('WARN', f'RTP resolution failed: {type(exc).__name__}')
+            self._send_json(502, {'status': 'error', 'message': 'RTP media validation failed'}, allow_cors=True)
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
@@ -1638,7 +1662,7 @@ def run_server() -> None:
         return
     print()
     print('=' * 72)
-    print('M-Stream Bridge v3.0.6')
+    print('M-Stream Bridge v3.0.7')
     print('=' * 72)
     try:
         from core.config import get_tmdb_endpoint
@@ -1658,6 +1682,7 @@ def run_server() -> None:
     print('  - POST /api/shutdown  (Graceful Exit)')
     print('  [Stream & Capture]')
     print('  - POST /set-stream')
+    print('  - POST /api/resolve-rtp')
     print('  - POST /update-meta')
     print('  - POST /capture-event')
     print('  - POST /capture-request')

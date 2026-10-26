@@ -36,6 +36,7 @@ const BRIDGE_ORIGIN = "http://127.0.0.1:7000";
 const CAPTURE_ENDPOINT = `${BRIDGE_ORIGIN}/capture-request`;
 const CAPTURE_EVENT_ENDPOINT = `${BRIDGE_ORIGIN}/capture-event`;
 const SET_STREAM_ENDPOINT = `${BRIDGE_ORIGIN}/set-stream`;
+const RTP_RESOLVE_ENDPOINT = `${BRIDGE_ORIGIN}/api/resolve-rtp`;
 const LOG_PREFIX = "[BRIDGE-EXT]";
 const LOG_LEVEL = "info";
 
@@ -72,6 +73,60 @@ const requestCache = new Map();
 const lastSetByKey = new Map();
 const tabRecentPrimary = new Map();
 const tabPageMeta = new Map();
+const rtpResolveState = new Map();
+
+function isRtpEpisodePage(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && (url.hostname === "rtp.pt" || url.hostname === "www.rtp.pt")
+      && /^\/play\/(?:[^/]+\/)?p\d+\/e\d+(?:\/|$)/.test(url.pathname);
+  } catch (_err) {
+    return false;
+  }
+}
+
+function isRtpTabRequest(tabId, pageUrl) {
+  return isRtpEpisodePage(pageUrl) || isRtpEpisodePage(tabPageMeta.get(tabId)?.page_url);
+}
+
+async function resolveRtpTab(tabId, pageUrl) {
+  if (tabId < 0 || !isRtpEpisodePage(pageUrl)) return;
+  const previous = rtpResolveState.get(tabId);
+  if (previous?.pageUrl === pageUrl && Date.now() - previous.at < (previous.ok ? 120000 : 30000)) return;
+  rtpResolveState.set(tabId, { pageUrl, at: Date.now(), ok: false });
+  try {
+    const response = await fetch(RTP_RESOLVE_ENDPOINT, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page_url: pageUrl }),
+    });
+    if (!response.ok) {
+      logInfo("RTP resolution unavailable", response.status);
+      return;
+    }
+    const result = await response.json();
+    if (result.status !== "ok" || inferStreamType(result.stream_url) !== "hls"
+        || !result.stream_url?.startsWith("https://streaming-vod.rtp.pt/hls/")) return;
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.url !== pageUrl) return;
+    const headers = result.request_headers || {};
+    const payload = buildPayload({ url: result.stream_url, tabId, type: "xmlhttprequest",
+      method: "GET", initiator: pageUrl, requestHeaders: Object.entries(headers).map(([name, value]) => ({ name, value })) });
+    const body = await buildSetStreamPayload({ tabId, initiator: pageUrl, documentUrl: pageUrl }, payload, "hls");
+    body.title = result.title || body.title;
+    body.hls_master_url = result.stream_url;
+    body.capture_source = "rtp_resolver";
+    body.capture_stage = "validated_manifest_and_segment";
+    body.capture_timestamp = Date.now();
+    rememberTabPrimaryCandidate({ tabId, initiator: pageUrl, documentUrl: pageUrl }, payload, "hls");
+    if (activeTabId < 0 || activeTabId === tabId) {
+      if (!await postSetStream(body)) return;
+    }
+    rtpResolveState.set(tabId, { pageUrl, at: Date.now(), ok: true });
+    logInfo("RTP HLS verified", result.height);
+  } catch (err) {
+    logInfo("RTP resolution failed", String(err));
+  }
+}
 let activeTabId = -1;
 
 /**
@@ -493,11 +548,13 @@ async function postSetStream(payload) {
 
     if (!resp.ok) {
       logDebug("set-stream rejected", resp.status, payload.stream_url);
-      return;
+      return false;
     }
     logInfo("set-stream ok", payload.stream_type, payload.stream_url, `s=${payload.season || "-"} ep=${payload.episode || "-"}`);
+    return true;
   } catch (err) {
     logDebug("set-stream unavailable", String(err));
+    return false;
   }
 }
 
@@ -979,6 +1036,7 @@ async function handleRuntimeMessage(message, sender) {
         });
         trimTabMeta();
         logDebug("page meta updated", tabId, tabPageMeta.get(tabId));
+        if (isRtpEpisodePage(page_url)) void resolveRtpTab(tabId, page_url);
       } else {
         logDebug("page meta skipped (iframe)", tabId, title);
       }
@@ -1007,6 +1065,7 @@ async function handleRuntimeMessage(message, sender) {
 
   if (message.type === "bridge_ext_page_hook") {
     const tabId = Number(sender?.tab?.id ?? -1);
+    if (isRtpTabRequest(tabId, message.pageUrl)) return { ok: false };
     const streamType = inferStreamType(message.url);
 
     if (streamType === "other") {
@@ -1049,6 +1108,7 @@ async function handleRuntimeMessage(message, sender) {
 // WebRequest: Intercept before request headers are sent
 chrome.webRequest.onBeforeSendHeaders.addListener(
   async (details) => {
+      if (isRtpTabRequest(Number(details?.tabId ?? -1), details?.initiator || details?.documentUrl)) return;
     if (!isAllowedRequestType(details?.type)) return;
     if (!isInterestingUrl(details?.url)) return;
     if (isSegmentLikeUrl(details?.url)) return;
@@ -1088,6 +1148,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 // WebRequest: Inspect response headers upon completion
 chrome.webRequest.onCompleted.addListener(
   async (details) => {
+      if (isRtpTabRequest(Number(details?.tabId ?? -1), details?.initiator || details?.documentUrl)) return;
     const url = details?.url || "";
     if (!url) return;
     if (isBridgeLocalUrl(url)) return;
@@ -1249,6 +1310,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  rtpResolveState.delete(tabId);
   tabRecentPrimary.delete(tabId);
   tabPageMeta.delete(tabId);
 });

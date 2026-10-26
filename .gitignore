@@ -4,7 +4,8 @@
 !.env.example
 
 # Build Outputs & Ephemeral Distributions
-/bin/
+/bin/*
+!/bin/yt-dlp-rtp-support.exe
 /temp/
 *.build/
 *.dist/
@@ -25,7 +26,6 @@ __pycache__/
 # Internal Documentation, Planning & Agent Artifacts
 AGENTS.md
 /docs/
-/tests/
 .agents/
 .codex/
 graphify-out/

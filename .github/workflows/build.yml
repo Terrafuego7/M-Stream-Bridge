@@ -84,6 +84,8 @@ jobs:
         # 3. Place extension and DevTools snippet at root
         cp -r dist/extension "$TARGET_DIR/"
         cp dist/migaku-player-snippet.js "$TARGET_DIR/"
+        mkdir -p "$TARGET_DIR/bin"
+        cp bin/yt-dlp-rtp-support.exe "$TARGET_DIR/bin/"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

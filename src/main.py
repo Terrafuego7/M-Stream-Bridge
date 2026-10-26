@@ -74,6 +74,7 @@ from core.config import (
     load_tmdb_api_key,
 )
 from core.hls_proxy import HlsProxyMixin
+from core.rtp_resolver import RTPResolveError, episode_ids, extract_format, validate_playback
 from core.state import (
     CAPTURE_TAB_META_TTL_SEC,
     HOST,
@@ -420,6 +421,7 @@ class RequestsResponseAdapter:
         self.status = resp.status_code
         self.code = resp.status_code
         self.reason = getattr(resp, "reason", "") or ""
+        self.url = getattr(resp, "url", "")
 
     def read(self, amt: int | None = None) -> bytes:
         if not self._stream:
@@ -1111,6 +1113,9 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
         self.end_headers()
 
     def do_POST(self) -> None:
+        if self.path == "/api/resolve-rtp":
+            self._handle_resolve_rtp()
+            return
         if self.path == "/set-stream":
             self._handle_set_stream()
             return
@@ -1154,6 +1159,28 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
             self._handle_shutdown()
             return
         self._send_json(404, {"status": "error", "message": "Not found"})
+
+    def _handle_resolve_rtp(self) -> None:
+        try:
+            data = self._read_json_body()
+            page_url = str(data.get("page_url") or "")
+            if not episode_ids(page_url):
+                self._send_json(400, {"status": "error", "message": "Invalid RTP episode URL"})
+                return
+            resolved = extract_format(page_url)
+            headers = dict(resolved["headers"])
+            headers["referer"] = page_url
+            headers["origin"] = "https://www.rtp.pt"
+            validate_playback(resolved["url"], headers, self._perform_urlopen)
+            self._send_json(200, {"status": "ok", "stream_url": resolved["url"],
+                                  "request_headers": resolved["headers"],
+                                  "title": resolved["title"], "height": resolved["height"]}, allow_cors=True)
+        except RTPResolveError as exc:
+            self._log("WARN", f"RTP resolution rejected: {exc}")
+            self._send_json(422, {"status": "error", "message": str(exc)}, allow_cors=True)
+        except Exception as exc:
+            self._log("WARN", f"RTP resolution failed: {type(exc).__name__}")
+            self._send_json(502, {"status": "error", "message": "RTP media validation failed"}, allow_cors=True)
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
@@ -2253,6 +2280,7 @@ def run_server() -> None:
     print("  - POST /api/shutdown  (Graceful Exit)")
     print("  [Stream & Capture]")
     print("  - POST /set-stream")
+    print("  - POST /api/resolve-rtp")
     print("  - POST /update-meta")
     print("  - POST /capture-event")
     print("  - POST /capture-request")
