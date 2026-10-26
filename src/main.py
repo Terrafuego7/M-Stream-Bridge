@@ -75,6 +75,7 @@ from core.config import (
 )
 from core.hls_proxy import HlsProxyMixin
 from core.rtp_resolver import RTPResolveError, episode_ids, extract_format, validate_playback
+from core.southpark_resolver import SouthParkError, resolve_episode as resolve_southpark_episode
 from core.state import (
     CAPTURE_TAB_META_TTL_SEC,
     HOST,
@@ -497,6 +498,9 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
         return
 
     def _log(self, level: str, message: str) -> None:
+        # South Park puts session signatures in both paths and queries.
+        message = re.sub(r"https?://(?:ns-stream\.paramount\.tech|southpark\.orchestrator\.viacomcbs-tech\.com)/[^\s\"'<>]+",
+                         "[South Park media URL]", message)
         current_priority = self.LOG_PRIORITY.get(LOG_LEVEL, 20)
         incoming_priority = self.LOG_PRIORITY.get((level or "INFO").upper(), 20)
         if incoming_priority < current_priority:
@@ -1113,6 +1117,9 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
         self.end_headers()
 
     def do_POST(self) -> None:
+        if self.path == "/api/resolve-southpark":
+            self._handle_resolve_southpark()
+            return
         if self.path == "/api/resolve-rtp":
             self._handle_resolve_rtp()
             return
@@ -1159,6 +1166,21 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
             self._handle_shutdown()
             return
         self._send_json(404, {"status": "error", "message": "Not found"})
+
+    def _handle_resolve_southpark(self) -> None:
+        try:
+            data = self._read_json_body()
+            result = resolve_southpark_episode(str(data.get("page_url") or ""))
+            self._log("INFO", f"South Park verified: S{result['season']}E{result['episode']} {result['height']}p, video and audio")
+            self._send_json(200, result, allow_cors=True)
+        except SouthParkError as exc:
+            self._log("WARN", f"South Park resolution rejected: {exc.code}")
+            self._send_json(400 if exc.code == "invalid_page" else 422,
+                            {"status": "error", "code": exc.code, "message": str(exc)}, allow_cors=True)
+        except Exception as exc:
+            self._log("WARN", f"South Park resolution failed: {type(exc).__name__}")
+            self._send_json(502, {"status": "error", "code": "resolver_error",
+                                  "message": "South Park media validation failed."}, allow_cors=True)
 
     def _handle_resolve_rtp(self) -> None:
         try:
@@ -2281,6 +2303,7 @@ def run_server() -> None:
     print("  [Stream & Capture]")
     print("  - POST /set-stream")
     print("  - POST /api/resolve-rtp")
+    print("  - POST /api/resolve-southpark")
     print("  - POST /update-meta")
     print("  - POST /capture-event")
     print("  - POST /capture-request")

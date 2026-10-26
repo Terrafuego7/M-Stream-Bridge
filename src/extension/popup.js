@@ -328,6 +328,23 @@ async function refreshState() {
     } else {
       setStatus(true, "Bridge active. Awaiting media stream...");
     }
+    // South Park resolution errors must not look like a successful capture of
+    // an unrelated previous stream. Other sites keep the normal popup flow.
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const key = `southpark:${tab?.id}`;
+      const capture = (await chrome.storage.session.get(key))[key];
+      if (capture?.pageUrl === tab?.url) {
+        setStatus(capture.state !== "error", "");
+        el.status.querySelector(".status-text").textContent = capture.message;
+        if (capture.state !== "ready") {
+          el.title.textContent = "South Park";
+          el.url.textContent = capture.state === "error" ? "Episode unavailable" : "Validating episode…";
+          el.pill.style.display = "none";
+          renderSeasonEpisode(null, null);
+        }
+      }
+    } catch (_err) { }
   } catch (err) {
     // If recently online, allow startup delay grace period
     if (Date.now() - lastServerOnlineAt < RECENT_ONLINE_GRACE_MS) {

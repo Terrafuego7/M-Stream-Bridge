@@ -26,6 +26,7 @@ self.addEventListener("install", () => {
 });
 
 import "./shared/utils.js";
+import { southParkEpisode, createSouthParkCapture } from "./southpark_capture.js";
 const { parseEpisodeFromText, parseSeasonFromText, extractEpisodeFromUrl } = globalThis.BridgeUtils;
 
 // ==========================================================================
@@ -128,6 +129,31 @@ async function resolveRtpTab(tabId, pageUrl) {
   }
 }
 let activeTabId = -1;
+
+const southParkCapture = createSouthParkCapture({
+  fetch, chrome, endpoint: `${BRIDGE_ORIGIN}/api/resolve-southpark`,
+  isActive: tabId => activeTabId < 0 || tabId === activeTabId,
+  publish: async (tabId, pageUrl, result) => {
+    const headers = result.request_headers || {};
+    const details = { tabId, initiator: pageUrl, documentUrl: pageUrl };
+    const payload = buildPayload({ ...details, url: result.stream_url, method: "GET", type: "xmlhttprequest", isMaster: true,
+      requestHeaders: Object.entries(headers).map(([name, value]) => ({ name, value })) });
+    const body = await buildSetStreamPayload(details, payload, "hls");
+    Object.assign(body, { title: result.title, season: result.season, episode: result.episode,
+      hls_master_url: result.stream_url, capture_source: "southpark_resolver",
+      capture_stage: "validated_video_and_audio", capture_timestamp: Date.now() });
+    return postSetStream(body);
+  },
+});
+
+async function isSouthParkTabRequest(details) {
+  const tabId = Number(details?.tabId ?? -1);
+  if (southParkEpisode(tabPageMeta.get(tabId)?.page_url)) return true;
+  if (tabId >= 0 && /^https:\/\/(?:www\.)?southparkstudios\.com(?:\/|$)/.test(details?.initiator || details?.documentUrl || "")) {
+    try { return Boolean(southParkEpisode((await chrome.tabs.get(tabId)).url)); } catch { }
+  }
+  return false;
+}
 
 /**
  * Evaluates whether logging is enabled for the specified level.
@@ -538,6 +564,7 @@ async function postCaptureEvent(payload) {
 }
 
 async function postSetStream(payload) {
+  const logUrl = payload.capture_source === "southpark_resolver" ? "[South Park signed HLS]" : payload.stream_url;
   try {
     const resp = await fetch(SET_STREAM_ENDPOINT, {
       method: "POST",
@@ -547,10 +574,10 @@ async function postSetStream(payload) {
     });
 
     if (!resp.ok) {
-      logDebug("set-stream rejected", resp.status, payload.stream_url);
+      logDebug("set-stream rejected", resp.status, logUrl);
       return false;
     }
-    logInfo("set-stream ok", payload.stream_type, payload.stream_url, `s=${payload.season || "-"} ep=${payload.episode || "-"}`);
+    logInfo("set-stream ok", payload.stream_type, logUrl, `s=${payload.season || "-"} ep=${payload.episode || "-"}`);
     return true;
   } catch (err) {
     logDebug("set-stream unavailable", String(err));
@@ -877,6 +904,11 @@ function rememberTabPrimaryCandidate(details, payload, streamType) {
 
 async function maybeSetStreamForActiveTab(tabId) {
   if (typeof tabId !== "number" || tabId < 0) return;
+  const pageUrl = tabPageMeta.get(tabId)?.page_url;
+  if (southParkEpisode(pageUrl)) {
+    await southParkCapture.capture(tabId, pageUrl, true);
+    return;
+  }
   const entry = tabRecentPrimary.get(tabId);
   if (!entry || !entry.candidates || entry.candidates.length === 0) return;
   const best = entry.candidates[entry.bestIdx ?? 0];
@@ -1037,6 +1069,7 @@ async function handleRuntimeMessage(message, sender) {
         trimTabMeta();
         logDebug("page meta updated", tabId, tabPageMeta.get(tabId));
         if (isRtpEpisodePage(page_url)) void resolveRtpTab(tabId, page_url);
+        if (sender?.frameId === 0 && southParkEpisode(page_url)) void southParkCapture.capture(tabId, page_url);
       } else {
         logDebug("page meta skipped (iframe)", tabId, title);
       }
@@ -1065,6 +1098,7 @@ async function handleRuntimeMessage(message, sender) {
 
   if (message.type === "bridge_ext_page_hook") {
     const tabId = Number(sender?.tab?.id ?? -1);
+    if (southParkEpisode(sender?.tab?.url) || southParkEpisode(tabPageMeta.get(tabId)?.page_url)) return { ok: false };
     if (isRtpTabRequest(tabId, message.pageUrl)) return { ok: false };
     const streamType = inferStreamType(message.url);
 
@@ -1109,6 +1143,7 @@ async function handleRuntimeMessage(message, sender) {
 chrome.webRequest.onBeforeSendHeaders.addListener(
   async (details) => {
       if (isRtpTabRequest(Number(details?.tabId ?? -1), details?.initiator || details?.documentUrl)) return;
+    if (await isSouthParkTabRequest(details)) return;
     if (!isAllowedRequestType(details?.type)) return;
     if (!isInterestingUrl(details?.url)) return;
     if (isSegmentLikeUrl(details?.url)) return;
@@ -1149,6 +1184,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 chrome.webRequest.onCompleted.addListener(
   async (details) => {
       if (isRtpTabRequest(Number(details?.tabId ?? -1), details?.initiator || details?.documentUrl)) return;
+    if (await isSouthParkTabRequest(details)) return;
     const url = details?.url || "";
     if (!url) return;
     if (isBridgeLocalUrl(url)) return;
@@ -1310,9 +1346,14 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  southParkCapture.forget(tabId);
   rtpResolveState.delete(tabId);
   tabRecentPrimary.delete(tabId);
   tabPageMeta.delete(tabId);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (change.status === "loading" && southParkEpisode(tab.url)) southParkCapture.forget(tabId);
 });
 
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

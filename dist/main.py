@@ -1,12 +1,12 @@
 # ==M-Stream Bridge==
 # @name        M-Stream Bridge
-# @version     3.0.7
+# @version     3.0.8
 # @author      Zielzy
 # @description Local bridge for non-DRM browser streams and Migaku Player.
 # @homepage    https://github.com/Zielzy/M-Stream-Bridge
 # ==/M-Stream Bridge==
 from __future__ import annotations
-BRIDGE_VERSION = '3.0.7'
+BRIDGE_VERSION = '3.0.8'
 import datetime
 import hashlib
 import http.server
@@ -29,6 +29,7 @@ from core.cloudflare import _CF_COOKIES, _set_cookie_header, _set_ua_header, _so
 from core.config import get_tmdb_endpoint, ensure_config_exists, get_config_path, load_jimaku_api_key, load_subdl_api_key, load_subdl_languages, load_tmdb_api_key
 from core.hls_proxy import HlsProxyMixin
 from core.rtp_resolver import RTPResolveError, episode_ids, extract_format, validate_playback
+from core.southpark_resolver import SouthParkError, resolve_episode as resolve_southpark_episode
 from core.state import CAPTURE_TAB_META_TTL_SEC, HOST, LOG_BUFFER, LOG_LEVEL, LOG_LOCK, LOG_PREFIX, LOG_TOTAL_COUNT, MAX_BODY_BYTES, MAX_CAPTURE_CANDIDATES, MAX_CAPTURE_TAB_META, MAX_LOG_ENTRIES, MAX_MANUAL_SUBTITLE_CANDIDATES, MAX_URL_HEADER_MAP, MAX_URL_HEADER_MAP_PER_HOST, PORT, SEGMENT_521_RETRY_ATTEMPTS, SEGMENT_521_RETRY_DELAY_SEC, SEGMENT_TRANSIENT_RETRY_ATTEMPTS, SEGMENT_TRANSIENT_RETRY_DELAY_SEC, STATE_LOCK, capture_active_state, capture_candidates, capture_tab_meta, current_stream, manual_subtitle_candidates, manual_subtitle_pin, srt_store
 from subtitle_providers.jimaku import JimakuBridge, _is_subtitle_like_url, _stream_key
 from subtitle_providers.subdl import SubdlProvider
@@ -245,6 +246,7 @@ class RequestsResponseAdapter:
         self.status = resp.status_code
         self.code = resp.status_code
         self.reason = getattr(resp, 'reason', '') or ''
+        self.url = getattr(resp, 'url', '')
 
     def read(self, amt: int | None=None) -> bytes:
         if not self._stream:
@@ -286,6 +288,7 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
         return
 
     def _log(self, level: str, message: str) -> None:
+        message = re.sub('https?://(?:ns-stream\\.paramount\\.tech|southpark\\.orchestrator\\.viacomcbs-tech\\.com)/[^\\s\\"\'<>]+', '[South Park media URL]', message)
         current_priority = self.LOG_PRIORITY.get(LOG_LEVEL, 20)
         incoming_priority = self.LOG_PRIORITY.get((level or 'INFO').upper(), 20)
         if incoming_priority < current_priority:
@@ -804,6 +807,9 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
         self.end_headers()
 
     def do_POST(self) -> None:
+        if self.path == '/api/resolve-southpark':
+            self._handle_resolve_southpark()
+            return
         if self.path == '/api/resolve-rtp':
             self._handle_resolve_rtp()
             return
@@ -850,6 +856,19 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
             self._handle_shutdown()
             return
         self._send_json(404, {'status': 'error', 'message': 'Not found'})
+
+    def _handle_resolve_southpark(self) -> None:
+        try:
+            data = self._read_json_body()
+            result = resolve_southpark_episode(str(data.get('page_url') or ''))
+            self._log('INFO', f"South Park verified: S{result['season']}E{result['episode']} {result['height']}p, video and audio")
+            self._send_json(200, result, allow_cors=True)
+        except SouthParkError as exc:
+            self._log('WARN', f'South Park resolution rejected: {exc.code}')
+            self._send_json(400 if exc.code == 'invalid_page' else 422, {'status': 'error', 'code': exc.code, 'message': str(exc)}, allow_cors=True)
+        except Exception as exc:
+            self._log('WARN', f'South Park resolution failed: {type(exc).__name__}')
+            self._send_json(502, {'status': 'error', 'code': 'resolver_error', 'message': 'South Park media validation failed.'}, allow_cors=True)
 
     def _handle_resolve_rtp(self) -> None:
         try:
@@ -1662,7 +1681,7 @@ def run_server() -> None:
         return
     print()
     print('=' * 72)
-    print('M-Stream Bridge v3.0.7')
+    print('M-Stream Bridge v3.0.8')
     print('=' * 72)
     try:
         from core.config import get_tmdb_endpoint
@@ -1683,6 +1702,7 @@ def run_server() -> None:
     print('  [Stream & Capture]')
     print('  - POST /set-stream')
     print('  - POST /api/resolve-rtp')
+    print('  - POST /api/resolve-southpark')
     print('  - POST /update-meta')
     print('  - POST /capture-event')
     print('  - POST /capture-request')

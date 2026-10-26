@@ -15,6 +15,7 @@ M-Stream Bridge
 M-Stream Bridge.bin
 M-Stream Bridge.app/
 *.zip
+/_internal_backup_*/
 M-Stream-Bridge-v*-Windows/
 M-Stream-Bridge-v*-Windows.zip
 

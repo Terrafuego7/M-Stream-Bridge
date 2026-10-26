@@ -1,6 +1,6 @@
 // ==M-Stream Bridge==
 // @name        M-Stream Bridge
-// @version     3.0.7
+// @version     3.0.8
 // @author      Zielzy
 // @description Local bridge for non-DRM browser streams and Migaku Player.
 // @homepage    https://github.com/Zielzy/M-Stream-Bridge
@@ -12,6 +12,8 @@ self.addEventListener("install", () => {
 });
 
 import "./shared/utils.js";
+
+import { southParkEpisode, createSouthParkCapture } from "./southpark_capture.js";
 
 const {parseEpisodeFromText: parseEpisodeFromText, parseSeasonFromText: parseSeasonFromText, extractEpisodeFromUrl: extractEpisodeFromUrl} = globalThis.BridgeUtils, BRIDGE_ORIGIN = "http://127.0.0.1:7000", CAPTURE_ENDPOINT = `${BRIDGE_ORIGIN}/capture-request`, CAPTURE_EVENT_ENDPOINT = `${BRIDGE_ORIGIN}/capture-event`, SET_STREAM_ENDPOINT = `${BRIDGE_ORIGIN}/set-stream`, RTP_RESOLVE_ENDPOINT = `${BRIDGE_ORIGIN}/api/resolve-rtp`, LOG_PREFIX = "[BRIDGE-EXT]", LOG_LEVEL = "info", DEFAULT_MIGAKU_EXTENSION_ID = "dmeppfcidcpcocleneopiblmpnbokhep", MIGAKU_PLAYER_PATH = "/pages/player/index.html", MAX_HEADER_VALUE_LEN = 4096, MAX_CACHE_SIZE = 2e3, MAX_COOLDOWN_KEYS = 1e3, STREAM_SET_COOLDOWN_HLS_MS = 3e4, STREAM_SET_COOLDOWN_DIRECT_MS = 15e3, STREAM_SET_COOLDOWN_TAB_MS = 3e3, AUTO_STREAM_TYPES = new Set([ "hls", "direct" ]), ALLOWED_REQUEST_TYPES = new Set([ "media", "xmlhttprequest", "fetch", "sub_frame", "object" ]), TAB_RECENT_TTL_MS = 3e5, TAB_SWITCH_SET_COOLDOWN_MS = 3e3, TAB_META_TTL_MS = 6e5, MAX_CANDIDATES_PER_TAB = 8, MAX_TAB_STATE_ENTRIES = 200, RESPONSE_STREAM_CONTENT_TYPES = new Set([ "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/octet-stream", "video/mp4", "video/webm", "video/MP2T", "video/iso.segment", "video/x-m4v" ]), requestCache = new Map, lastSetByKey = new Map, tabRecentPrimary = new Map, tabPageMeta = new Map, rtpResolveState = new Map;
 
@@ -66,8 +68,8 @@ async function resolveRtpTab(tabId, pageUrl) {
                 initiator: pageUrl,
                 documentUrl: pageUrl
             }, payload, "hls");
-            if (body.title = result.title || body.title, body.hls_master_url = result.stream_url, 
-            body.capture_source = "rtp_resolver", body.capture_stage = "validated_manifest_and_segment", 
+            if (body.title = result.title || body.title, body.hls_master_url = result.stream_url,
+            body.capture_source = "rtp_resolver", body.capture_stage = "validated_manifest_and_segment",
             body.capture_timestamp = Date.now(), rememberTabPrimaryCandidate({
                 tabId: tabId,
                 initiator: pageUrl,
@@ -85,6 +87,48 @@ async function resolveRtpTab(tabId, pageUrl) {
 }
 
 let activeTabId = -1;
+
+const southParkCapture = createSouthParkCapture({
+    fetch: fetch,
+    chrome: chrome,
+    endpoint: `${BRIDGE_ORIGIN}/api/resolve-southpark`,
+    isActive: tabId => activeTabId < 0 || tabId === activeTabId,
+    publish: async (tabId, pageUrl, result) => {
+        const headers = result.request_headers || {}, details = {
+            tabId: tabId,
+            initiator: pageUrl,
+            documentUrl: pageUrl
+        }, payload = buildPayload({
+            ...details,
+            url: result.stream_url,
+            method: "GET",
+            type: "xmlhttprequest",
+            isMaster: !0,
+            requestHeaders: Object.entries(headers).map(([name, value]) => ({
+                name: name,
+                value: value
+            }))
+        }), body = await buildSetStreamPayload(details, payload, "hls");
+        return Object.assign(body, {
+            title: result.title,
+            season: result.season,
+            episode: result.episode,
+            hls_master_url: result.stream_url,
+            capture_source: "southpark_resolver",
+            capture_stage: "validated_video_and_audio",
+            capture_timestamp: Date.now()
+        }), postSetStream(body);
+    }
+});
+
+async function isSouthParkTabRequest(details) {
+    const tabId = Number(details?.tabId ?? -1);
+    if (southParkEpisode(tabPageMeta.get(tabId)?.page_url)) return !0;
+    if (tabId >= 0 && /^https:\/\/(?:www\.)?southparkstudios\.com(?:\/|$)/.test(details?.initiator || details?.documentUrl || "")) try {
+        return Boolean(southParkEpisode((await chrome.tabs.get(tabId)).url));
+    } catch {}
+    return !1;
+}
 
 function shouldLog(level) {
     return "debug" !== level;
@@ -246,7 +290,7 @@ function trimCooldownCache() {
 
 function trimTabRecent() {
     const now = Date.now();
-    for (const [tabId, item] of tabRecentPrimary.entries()) item && item.candidates && 0 !== item.candidates.length ? (item.candidates = item.candidates.filter(c => c.lastSeenAt && now - c.lastSeenAt <= 3e5), 
+    for (const [tabId, item] of tabRecentPrimary.entries()) item && item.candidates && 0 !== item.candidates.length ? (item.candidates = item.candidates.filter(c => c.lastSeenAt && now - c.lastSeenAt <= 3e5),
     item.candidates.length ? item.bestIdx = bestCandidateIndex(item.candidates) : tabRecentPrimary.delete(tabId)) : tabRecentPrimary.delete(tabId);
     for (;tabRecentPrimary.size > 200; ) {
         let oldestTabId = null, oldestSeenAt = 1 / 0;
@@ -275,7 +319,7 @@ function trimTabMeta() {
 
 function bestCandidateIndex(candidates) {
     let bestScore = -1 / 0, bestIdx = 0;
-    for (let i = 0; i < candidates.length; i++) candidates[i].score > bestScore && (bestScore = candidates[i].score, 
+    for (let i = 0; i < candidates.length; i++) candidates[i].score > bestScore && (bestScore = candidates[i].score,
     bestIdx = i);
     return bestIdx;
 }
@@ -313,6 +357,7 @@ async function postCaptureEvent(payload) {
 }
 
 async function postSetStream(payload) {
+    const logUrl = "southpark_resolver" === payload.capture_source ? "[South Park signed HLS]" : payload.stream_url;
     try {
         const resp = await fetch(SET_STREAM_ENDPOINT, {
             method: "POST",
@@ -322,8 +367,8 @@ async function postSetStream(payload) {
             body: JSON.stringify(payload),
             keepalive: !0
         });
-        return resp.ok ? (logInfo("set-stream ok", payload.stream_type, payload.stream_url, `s=${payload.season || "-"} ep=${payload.episode || "-"}`), 
-        !0) : (logDebug("set-stream rejected", resp.status, payload.stream_url), !1);
+        return resp.ok ? (logInfo("set-stream ok", payload.stream_type, logUrl, `s=${payload.season || "-"} ep=${payload.episode || "-"}`),
+        !0) : (logDebug("set-stream rejected", resp.status, logUrl), !1);
     } catch (err) {
         return logDebug("set-stream unavailable", String(err)), !1;
     }
@@ -356,14 +401,14 @@ function shouldSetStream(url, streamType, tabId = -1) {
     const now = Date.now(), key = normalizeUrlKey(url) || url, prev = lastSetByKey.get(key) || 0, cooldownMs = "hls" === streamType ? 3e4 : 15e3;
     if (now - prev < cooldownMs) {
         const elapsed = now - prev;
-        return logDebug(`cooldown reject | layer=URL | source=webRequest | key=${key} | elapsed=${elapsed}ms | remaining=${cooldownMs - elapsed}ms`), 
+        return logDebug(`cooldown reject | layer=URL | source=webRequest | key=${key} | elapsed=${elapsed}ms | remaining=${cooldownMs - elapsed}ms`),
         !1;
     }
     if (tabId >= 0) try {
         const tabKey = `tab:${tabId}:host:${new URL(url).hostname}:type:${streamType}`, tabPrev = lastSetByKey.get(tabKey) || 0;
         if (now - tabPrev < 3e3) {
             const elapsed = now - tabPrev;
-            return logDebug(`cooldown reject | layer=TAB | source=webRequest | key=${tabKey} | elapsed=${elapsed}ms | remaining=${3e3 - elapsed}ms`), 
+            return logDebug(`cooldown reject | layer=TAB | source=webRequest | key=${tabKey} | elapsed=${elapsed}ms | remaining=${3e3 - elapsed}ms`),
             !1;
         }
         lastSetByKey.set(tabKey, now);
@@ -373,7 +418,7 @@ function shouldSetStream(url, streamType, tabId = -1) {
 
 function shouldSetFromTabSwitch(url) {
     const key = `tab-switch:${normalizeUrlKey(url) || url}`, now = Date.now();
-    return !(now - (lastSetByKey.get(key) || 0) < 3e3) && (lastSetByKey.set(key, now), 
+    return !(now - (lastSetByKey.get(key) || 0) < 3e3) && (lastSetByKey.set(key, now),
     trimCooldownCache(), !0);
 }
 
@@ -408,9 +453,9 @@ function buildPayload(details) {
         initiator: details?.initiator || details?.documentUrl || "",
         request_headers: headers
     };
-    return meta && (payload.title = meta.title, payload.title_candidates = meta.title_candidates, 
-    payload.episode = meta.episode, payload.season = meta.season, payload.page_url = meta.page_url), 
-    requestCache.set(url, payload), key && requestCache.set(key, payload), trimCache(), 
+    return meta && (payload.title = meta.title, payload.title_candidates = meta.title_candidates,
+    payload.episode = meta.episode, payload.season = meta.season, payload.page_url = meta.page_url),
+    requestCache.set(url, payload), key && requestCache.set(key, payload), trimCache(),
     payload;
 }
 
@@ -448,7 +493,7 @@ async function buildSetStreamPayload(details, payload, streamType) {
     payload.url && (headerMap[payload.url] = headers), payload.url_key && (headerMap[payload.url_key] = headers);
     const masterCandidate = "hls" === streamType ? findRecentHlsMasterForTab(tabId, payload.url) : null;
     let hlsMasterUrl = payload.url;
-    return "hls" === streamType && (payload.isMaster ? hlsMasterUrl = payload.url : masterCandidate && (hlsMasterUrl = masterCandidate.payload.url)), 
+    return "hls" === streamType && (payload.isMaster ? hlsMasterUrl = payload.url : masterCandidate && (hlsMasterUrl = masterCandidate.payload.url)),
     {
         stream_url: payload.url,
         stream_type: streamType,
@@ -476,13 +521,13 @@ function scoreStream(url, streamType) {
     if (!url || "string" != typeof url) return 0;
     const u = url.toLowerCase();
     let score = 0;
-    return isHlsMasterUrl(u) && (score += 150), u.includes("master.m3u8") && (score += 50), 
-    u.match(/index[^/]*\.m3u8/) && (score += 30), u.match(/\/hls\d*\//) && (score += 25), 
-    u.match(/\/playlist\//) && (score += 20), u.match(/\/manifest\//) && (score += 20), 
-    u.match(/1080p?|2160p?|4k/) && (score += 200), u.match(/720p?/) && (score += 180), 
-    u.match(/\/video\/|\/stream\//) && (score += 15), u.match(/\/ep(?:isode)?[\/_-]?\d/) && (score += 25), 
-    u.match(/seg-\d|chunk|fragment/) && (score -= 30), u.match(/(^|[\/_-])audio[\/_-\d]/) && (score -= 40), 
-    u.match(/preview|thumb|low|tiny/) && (score -= 20), "direct" !== streamType || u.match(/audio/) || (score += 5), 
+    return isHlsMasterUrl(u) && (score += 150), u.includes("master.m3u8") && (score += 50),
+    u.match(/index[^/]*\.m3u8/) && (score += 30), u.match(/\/hls\d*\//) && (score += 25),
+    u.match(/\/playlist\//) && (score += 20), u.match(/\/manifest\//) && (score += 20),
+    u.match(/1080p?|2160p?|4k/) && (score += 200), u.match(/720p?/) && (score += 180),
+    u.match(/\/video\/|\/stream\//) && (score += 15), u.match(/\/ep(?:isode)?[\/_-]?\d/) && (score += 25),
+    u.match(/seg-\d|chunk|fragment/) && (score -= 30), u.match(/(^|[\/_-])audio[\/_-\d]/) && (score -= 40),
+    u.match(/preview|thumb|low|tiny/) && (score -= 20), "direct" !== streamType || u.match(/audio/) || (score += 5),
     score;
 }
 
@@ -508,11 +553,11 @@ function rememberTabPrimaryCandidate(details, payload, streamType) {
         bestIdx: 0
     }), void trimTabRecent();
     const {candidates: candidates} = existing, candidateKey = normalizeUrlKey(payload.url) || payload.url, duplicateIdx = candidates.findIndex(candidate => (normalizeUrlKey(candidate?.payload?.url) || candidate?.payload?.url) === candidateKey);
-    if (duplicateIdx >= 0) return candidates[duplicateIdx] = newCandidate, existing.bestIdx = bestCandidateIndex(candidates), 
+    if (duplicateIdx >= 0) return candidates[duplicateIdx] = newCandidate, existing.bestIdx = bestCandidateIndex(candidates),
     void trimTabRecent();
     if (candidates.length < 8) candidates.push(newCandidate); else {
         let minScore = 1 / 0, minIdx = -1;
-        for (let i = 0; i < candidates.length; i++) candidates[i].score < minScore && (minScore = candidates[i].score, 
+        for (let i = 0; i < candidates.length; i++) candidates[i].score < minScore && (minScore = candidates[i].score,
         minIdx = i);
         if (!(score > minScore)) return;
         candidates[minIdx] = newCandidate;
@@ -522,6 +567,8 @@ function rememberTabPrimaryCandidate(details, payload, streamType) {
 
 async function maybeSetStreamForActiveTab(tabId) {
     if ("number" != typeof tabId || tabId < 0) return;
+    const pageUrl = tabPageMeta.get(tabId)?.page_url;
+    if (southParkEpisode(pageUrl)) return void await southParkCapture.capture(tabId, pageUrl, !0);
     const entry = tabRecentPrimary.get(tabId);
     if (!entry || !entry.candidates || 0 === entry.candidates.length) return;
     const best = entry.candidates[entry.bestIdx ?? 0];
@@ -532,9 +579,9 @@ async function maybeSetStreamForActiveTab(tabId) {
         initiator: best.detailsLite?.initiator || "",
         documentUrl: best.detailsLite?.documentUrl || ""
     }, setStreamBody = await buildSetStreamPayload(fakeDetails, best.payload, best.streamType);
-    setStreamBody.capture_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, 
-    setStreamBody.capture_timestamp = Date.now(), setStreamBody.capture_source = "tab_switch", 
-    setStreamBody.capture_stage = "sync", setStreamBody.cooldown_key = normalizeUrlKey(best.payload.url) || best.payload.url, 
+    setStreamBody.capture_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    setStreamBody.capture_timestamp = Date.now(), setStreamBody.capture_source = "tab_switch",
+    setStreamBody.capture_stage = "sync", setStreamBody.cooldown_key = normalizeUrlKey(best.payload.url) || best.payload.url,
     postSetStream(setStreamBody), chrome.tabs.sendMessage(tabId, {
         type: "bridge_force_meta_update"
     }).catch(() => {}), logInfo("active-tab switch stream", best.streamType, best.payload.url, "score=" + best.score);
@@ -638,7 +685,7 @@ async function handleRuntimeMessage(message, sender) {
                     const key = `${item.value.toLowerCase()}::${item.source.toLowerCase()}`;
                     seenCandidates.has(key) || (seenCandidates.add(key), title_candidates.push(item));
                 }
-                const episode = Number(message.episode || 0) || null, season = Number(message.season || 0) || null, cleanTitle = (tabPageMeta.get(tabId), 
+                const episode = Number(message.episode || 0) || null, season = Number(message.season || 0) || null, cleanTitle = (tabPageMeta.get(tabId),
                 (title || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
                 message.is_top_frame ? (tabPageMeta.set(tabId, {
                     page_url: page_url,
@@ -648,8 +695,8 @@ async function handleRuntimeMessage(message, sender) {
                     episode: episode,
                     season: season,
                     at: Date.now()
-                }), trimTabMeta(), logDebug("page meta updated", tabId, tabPageMeta.get(tabId)), 
-                isRtpEpisodePage(page_url) && resolveRtpTab(tabId, page_url)) : logDebug("page meta skipped (iframe)", tabId, title), 
+                }), trimTabMeta(), logDebug("page meta updated", tabId, tabPageMeta.get(tabId)),
+                isRtpEpisodePage(page_url) && resolveRtpTab(tabId, page_url), 0 === sender?.frameId && southParkEpisode(page_url) && southParkCapture.capture(tabId, page_url)) : logDebug("page meta skipped (iframe)", tabId, title),
                 postCaptureEvent({
                     event_type: "page_meta",
                     tab_id: tabId,
@@ -672,11 +719,14 @@ async function handleRuntimeMessage(message, sender) {
         if ("bridge_open_migaku_player" === message.type || "open_migaku_player" === message.type) return await openMigakuPlayer();
         if ("bridge_ext_page_hook" === message.type) {
             const tabId = Number(sender?.tab?.id ?? -1);
+            if (southParkEpisode(sender?.tab?.url) || southParkEpisode(tabPageMeta.get(tabId)?.page_url)) return {
+                ok: !1
+            };
             if (isRtpTabRequest(tabId, message.pageUrl)) return {
                 ok: !1
             };
             const streamType = inferStreamType(message.url);
-            if ("other" === streamType) return logInfo("DOM HOOK rejected (not a stream)", message.url), 
+            if ("other" === streamType) return logInfo("DOM HOOK rejected (not a stream)", message.url),
             {
                 ok: !1
             };
@@ -694,9 +744,9 @@ async function handleRuntimeMessage(message, sender) {
                 initiator: message.pageUrl,
                 documentUrl: message.pageUrl
             }, setStreamBody = await buildSetStreamPayload(fakeDetails, payload, streamType);
-            return setStreamBody.capture_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, 
-            setStreamBody.capture_timestamp = Date.now(), setStreamBody.capture_source = "hook", 
-            setStreamBody.capture_stage = "best_candidate", setStreamBody.cooldown_key = normalizeUrlKey(message.url) || message.url, 
+            return setStreamBody.capture_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            setStreamBody.capture_timestamp = Date.now(), setStreamBody.capture_source = "hook",
+            setStreamBody.capture_stage = "best_candidate", setStreamBody.cooldown_key = normalizeUrlKey(message.url) || message.url,
             postSetStream(setStreamBody), chrome.tabs.sendMessage(tabId, {
                 type: "bridge_force_meta_update"
             }).catch(() => {}), {
@@ -721,7 +771,7 @@ function isNewerVersion(candidate, current) {
 
 async function checkUpstreamUpdate() {
     try {
-        const currentVersion = chrome.runtime.getManifest()?.version || "3.0.7", cached = await chrome.storage.local.get([ "upstreamVersion", "downloadUrl", "lastUpdateCheck" ]), now = Date.now();
+        const currentVersion = chrome.runtime.getManifest()?.version || "3.0.8", cached = await chrome.storage.local.get([ "upstreamVersion", "downloadUrl", "lastUpdateCheck" ]), now = Date.now();
         let version = cached?.upstreamVersion;
         if (!version || now - (cached?.lastUpdateCheck || 0) > 432e5) {
             const resp = await fetch("https://raw.githubusercontent.com/Zielzy/M-Stream-Bridge/main/index.min.json", {
@@ -748,6 +798,7 @@ async function checkUpstreamUpdate() {
 
 chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
     if (isRtpTabRequest(Number(details?.tabId ?? -1), details?.initiator || details?.documentUrl)) return;
+    if (await isSouthParkTabRequest(details)) return;
     if (!isAllowedRequestType(details?.type)) return;
     if (!isInterestingUrl(details?.url)) return;
     if (isSegmentLikeUrl(details?.url)) return;
@@ -759,9 +810,9 @@ chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
     if (!shouldSetStream(payload.url, streamType, requestTabId)) return;
     logInfo("set-stream", streamType, payload.url, "score=" + scoreStream(payload.url, streamType));
     const setStreamBody = await buildSetStreamPayload(details, payload, streamType);
-    setStreamBody.capture_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, 
-    setStreamBody.capture_timestamp = Date.now(), setStreamBody.capture_source = "webRequest_beforeSendHeaders", 
-    setStreamBody.capture_stage = "network", setStreamBody.cooldown_key = normalizeUrlKey(payload.url) || payload.url, 
+    setStreamBody.capture_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    setStreamBody.capture_timestamp = Date.now(), setStreamBody.capture_source = "webRequest_beforeSendHeaders",
+    setStreamBody.capture_stage = "network", setStreamBody.cooldown_key = normalizeUrlKey(payload.url) || payload.url,
     postSetStream(setStreamBody), details.tabId >= 0 && chrome.tabs.sendMessage(details.tabId, {
         type: "bridge_force_meta_update"
     }).catch(() => {});
@@ -769,6 +820,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
     urls: [ "<all_urls>" ]
 }, [ "requestHeaders", "extraHeaders" ]), chrome.webRequest.onCompleted.addListener(async details => {
     if (isRtpTabRequest(Number(details?.tabId ?? -1), details?.initiator || details?.documentUrl)) return;
+    if (await isSouthParkTabRequest(details)) return;
     const url = details?.url || "";
     if (!url) return;
     if (isBridgeLocalUrl(url)) return;
@@ -794,7 +846,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
         initiator: details?.initiator || details?.documentUrl || "",
         request_headers: requestHeaders
     };
-    requestCache.set(url, payload), normalizedKey && requestCache.set(normalizedKey, payload), 
+    requestCache.set(url, payload), normalizedKey && requestCache.set(normalizedKey, payload),
     trimCache(), postCapture(payload);
     let streamType = inferStreamType(url);
     if ("other" === streamType) {
@@ -819,22 +871,25 @@ chrome.webRequest.onBeforeSendHeaders.addListener(async details => {
     };
     logInfo("onCompleted set-stream", streamType, url, "score=" + scoreStream(url, streamType));
     const setStreamBody = await buildSetStreamPayload(fakeDetails, payload, streamType);
-    setStreamBody.capture_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, 
-    setStreamBody.capture_timestamp = Date.now(), setStreamBody.capture_source = "webRequest_onCompleted", 
-    setStreamBody.capture_stage = "network", setStreamBody.cooldown_key = normalizeUrlKey(payload.url) || payload.url, 
+    setStreamBody.capture_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    setStreamBody.capture_timestamp = Date.now(), setStreamBody.capture_source = "webRequest_onCompleted",
+    setStreamBody.capture_stage = "network", setStreamBody.cooldown_key = normalizeUrlKey(payload.url) || payload.url,
     postSetStream(setStreamBody), details.tabId >= 0 && chrome.tabs.sendMessage(details.tabId, {
         type: "bridge_force_meta_update"
     }).catch(() => {});
 }, {
     urls: [ "<all_urls>" ]
 }, [ "responseHeaders", "extraHeaders" ]), chrome.runtime.onInstalled.addListener(() => {
-    logInfo("installed", "v3.0.7"), checkUpstreamUpdate();
+    logInfo("installed", "v3.0.8"), checkUpstreamUpdate();
 }), chrome.runtime.onStartup.addListener(() => {
     checkUpstreamUpdate();
 }), chrome.tabs.onActivated.addListener(async activeInfo => {
     activeTabId = Number(activeInfo?.tabId ?? -1), await maybeSetStreamForActiveTab(activeTabId);
 }), chrome.tabs.onRemoved.addListener(tabId => {
-    rtpResolveState.delete(tabId), tabRecentPrimary.delete(tabId), tabPageMeta.delete(tabId);
+    southParkCapture.forget(tabId), rtpResolveState.delete(tabId), tabRecentPrimary.delete(tabId),
+    tabPageMeta.delete(tabId);
+}), chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+    "loading" === change.status && southParkEpisode(tab.url) && southParkCapture.forget(tabId);
 }), chrome.tabs.query({
     active: !0,
     currentWindow: !0

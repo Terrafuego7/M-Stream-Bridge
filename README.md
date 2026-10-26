@@ -23,6 +23,7 @@
 - **Migaku Video Player Integration**: Seamlessly pipes unsupported video streams into Migaku Player via a local proxy, enabling advanced language learning tools.
 - **Multi-Provider Subtitle Injection**: Integrates with Jimaku (for Japanese) and Subdl (for 10+ global languages) to automatically fetch and inject subtitles directly into the player.
 - **Local Dashboard**: A bundled local server dashboard (running on port 7000) to monitor stream status, manually search for subtitles, configure API keys, and manage server settings.
+- **Episode Resolvers**: RTP Play and South Park Studios episode pages can be resolved by the local server when ordinary browser media capture does not identify a playable stream. See [South Park support and test steps](SOUTHPARK_SUPPORT.md) and [extension usage](extension/README.md).
 
 ## How It Works
 

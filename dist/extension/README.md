@@ -32,8 +32,35 @@ load; reload the episode if RTP expires a URL while the player is open.
 
 To verify: open the episode in Chrome, open the extension popup, and confirm it
 shows an HLS stream. `http://127.0.0.1:7000/api/current-stream` should show
-`capture_source: rtp_resolver` and the stream host `streaming-vod.rtp.pt`.
+the stream host `streaming-vod.rtp.pt` and the episode title.
 `http://127.0.0.1:7000/stream.m3u8` must begin with `#EXTM3U`; its first
 `/proxy-segment` URL must return media bytes. Run the Migaku Player snippet and
 select Proxy playback. Extension errors appear under **Service worker → Inspect
 views** on `chrome://extensions`; server errors appear at `/api/logs`.
+
+## South Park Studios (server 3.0.8 or newer)
+
+Open this episode, not the homepage:
+`https://www.southparkstudios.com/episodes/940f8z/south-park-cartman-gets-an-anal-probe-season-1-ep-1`.
+Reload the extension in `chrome://extensions`, then reload the episode and keep
+its tab active until the popup says **South Park HLS verified (1080p)**. Reopen
+the popup if it was opened while validation was running. Open Migaku Player,
+run the supplied `migaku-player-snippet.js`, and select **Proxy** playback.
+
+The local server reads the episode's advertised public video service and
+validates the HLS master, best video, default audio, public HLS key and initial
+segments. It preserves the master so audio is not lost. The extension ignores
+generic media/ad captures only on these South Park episode pages. No new Chrome
+permissions or browser cookies are needed. It does not require yt-dlp for South Park.
+
+Only English `.com/episodes/…/south-park-…-season-N-ep-N` pages are supported.
+Regional redirects, unavailable/authenticated episodes, DASH and DRM are rejected
+with a popup error; no region or authentication workaround is attempted.
+Ordinary AES-128 HLS identity keys are supported by the existing proxy.
+Signed media URLs expire: reload the episode to obtain a fresh URL, then reload
+Proxy playback. Do not share signed URLs or current-stream API responses.
+
+Source files live in `src/extension`; the build stages them in `dist/extension`.
+Chrome loads the release copy in the root `extension` folder. Updating only
+`src` or only `dist` is insufficient. See `SOUTHPARK_SUPPORT.md` in the project
+root for the investigation, build commands and reproducible live tests.

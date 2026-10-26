@@ -1,6 +1,6 @@
 // ==M-Stream Bridge==
 // @name        M-Stream Bridge
-// @version     3.0.7
+// @version     3.0.8
 // @author      Zielzy
 // @description Local bridge for non-DRM browser streams and Migaku Player.
 // @homepage    https://github.com/Zielzy/M-Stream-Bridge
@@ -26,7 +26,7 @@ const el = {
 };
 
 function showToast(message) {
-    el.toast && (el.toast.textContent = message, el.toast.classList.add("show"), clearTimeout(toastTimer), 
+    el.toast && (el.toast.textContent = message, el.toast.classList.add("show"), clearTimeout(toastTimer),
     toastTimer = setTimeout(() => el.toast.classList.remove("show"), 1400));
 }
 
@@ -37,8 +37,8 @@ function setStatus(ok, text) {
 }
 
 function setServerIndicator(online) {
-    el.serverLine && (el.serverLine.textContent = new URL(BRIDGE_ORIGIN).host), el.serverDot && el.serverDot.classList.toggle("online", online), 
-    el.serverBadge && (el.serverBadge.textContent = online ? "ONLINE" : "OFFLINE", el.serverBadge.classList.toggle("online", online), 
+    el.serverLine && (el.serverLine.textContent = new URL(BRIDGE_ORIGIN).host), el.serverDot && el.serverDot.classList.toggle("online", online),
+    el.serverBadge && (el.serverBadge.textContent = online ? "ONLINE" : "OFFLINE", el.serverBadge.classList.toggle("online", online),
     el.serverBadge.classList.toggle("offline", !online));
 }
 
@@ -50,8 +50,8 @@ function normalizePositiveInt(value) {
 }
 
 function renderSeasonEpisode(season, episode) {
-    el.season && (season ? (el.season.textContent = `S${String(season).padStart(2, "0")}`, 
-    el.season.style.display = "inline-flex") : el.season.style.display = "none"), el.episode && (episode ? (el.episode.textContent = `EP${String(episode).padStart(2, "0")}`, 
+    el.season && (season ? (el.season.textContent = `S${String(season).padStart(2, "0")}`,
+    el.season.style.display = "inline-flex") : el.season.style.display = "none"), el.episode && (episode ? (el.episode.textContent = `EP${String(episode).padStart(2, "0")}`,
     el.episode.style.display = "inline-flex") : el.episode.style.display = "none");
 }
 
@@ -63,9 +63,9 @@ function compactUrl(url) {
 
 function applyStream(streamData, playbackUrl) {
     const stream = streamData || {}, streamType = String(stream.stream_type || "hls").toLowerCase(), streamUrl = stream.stream_url || stream.m3u8_url || "", title = stream.clean_title || stream.display_title || stream.title || "Captured by Bridge Extension", season = normalizePositiveInt(stream.season), episode = normalizePositiveInt(stream.episode) || normalizePositiveInt(stream.detected_episode);
-    streamUrl ? (el.pill.textContent = "direct" === streamType ? "DIRECT" : "HLS", el.pill.classList.toggle("direct", "direct" === streamType), 
-    el.pill.classList.toggle("hls", "direct" !== streamType), el.pill.style.display = "inline-flex") : el.pill.style.display = "none", 
-    el.title.textContent = title, el.url.textContent = compactUrl(streamUrl), renderSeasonEpisode(season, episode), 
+    streamUrl ? (el.pill.textContent = "direct" === streamType ? "DIRECT" : "HLS", el.pill.classList.toggle("direct", "direct" === streamType),
+    el.pill.classList.toggle("hls", "direct" !== streamType), el.pill.style.display = "inline-flex") : el.pill.style.display = "none",
+    el.title.textContent = title, el.url.textContent = compactUrl(streamUrl), renderSeasonEpisode(season, episode),
     latestState = {
         streamType: streamType
     };
@@ -162,14 +162,23 @@ async function openMigakuPlayerDirect() {
 
 async function refreshState() {
     try {
-        setStatus(!0, "Verifying bridge connection..."), await fetchJsonWithRetry(`${BRIDGE_ORIGIN}/health`), 
+        setStatus(!0, "Verifying bridge connection..."), await fetchJsonWithRetry(`${BRIDGE_ORIGIN}/health`),
         lastServerOnlineAt = Date.now(), setServerIndicator(!0);
         const data = await fetchJsonWithRetry(`${BRIDGE_ORIGIN}/api/current-stream`, 2), hasStream = Boolean(data?.has_stream);
         applyStream(data?.stream || null, data?.playback_url || ""), setStatus(!0, hasStream ? `Bridge ready. Streaming ${latestState.streamType.toUpperCase()} feed...` : "Bridge active. Awaiting media stream...");
+        try {
+            const [tab] = await chrome.tabs.query({
+                active: !0,
+                currentWindow: !0
+            }), key = `southpark:${tab?.id}`, capture = (await chrome.storage.session.get(key))[key];
+            capture?.pageUrl === tab?.url && (setStatus("error" !== capture.state, ""), el.status.querySelector(".status-text").textContent = capture.message,
+            "ready" !== capture.state && (el.title.textContent = "South Park", el.url.textContent = "error" === capture.state ? "Episode unavailable" : "Validating episode…",
+            el.pill.style.display = "none", renderSeasonEpisode(null, null)));
+        } catch (_err) {}
     } catch (err) {
         if (Date.now() - lastServerOnlineAt < 2500) return void setStatus(!0, "Bridge server is initializing...");
-        setServerIndicator(!1), latestState = null, renderSeasonEpisode(null, null), el.pill && (el.pill.style.display = "none"), 
-        el.title.textContent = "Bridge offline", el.url.textContent = "Run M-Stream Bridge.exe", 
+        setServerIndicator(!1), latestState = null, renderSeasonEpisode(null, null), el.pill && (el.pill.style.display = "none"),
+        el.title.textContent = "Bridge offline", el.url.textContent = "Run M-Stream Bridge.exe",
         setStatus(!1, "Bridge offline. Please launch the desktop app.");
     }
 }
@@ -184,7 +193,7 @@ async function openMigakuPlayer() {
             type: "open_migaku_player"
         }));
     } catch (_err) {}
-    if (resp?.ok || (resp = await openMigakuPlayerDirect()), resp?.ok) return setStatus(!0, resp.reused ? "Switched to active Migaku Player." : "Migaku Local Player launched."), 
+    if (resp?.ok || (resp = await openMigakuPlayerDirect()), resp?.ok) return setStatus(!0, resp.reused ? "Switched to active Migaku Player." : "Migaku Local Player launched."),
     void showToast(resp.reused ? "Focus Migaku" : "Open Migaku");
     throw new Error(resp?.error || "Failed to open Migaku");
 }
@@ -214,7 +223,7 @@ function isNewerVersion(candidate, current) {
 
 async function checkExtensionUpdate() {
     try {
-        const manifest = chrome.runtime.getManifest ? chrome.runtime.getManifest() : null, currentVersion = manifest?.version || "3.0.7", cached = await chrome.storage.local.get([ "upstreamVersion", "downloadUrl", "lastUpdateCheck" ]), now = Date.now();
+        const manifest = chrome.runtime.getManifest ? chrome.runtime.getManifest() : null, currentVersion = manifest?.version || "3.0.8", cached = await chrome.storage.local.get([ "upstreamVersion", "downloadUrl", "lastUpdateCheck" ]), now = Date.now();
         let version = cached?.upstreamVersion, downloadUrl = cached?.downloadUrl || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest";
         if (!version || now - (cached?.lastUpdateCheck || 0) > 432e5) {
             const resp = await fetch("https://raw.githubusercontent.com/Zielzy/M-Stream-Bridge/main/index.min.json", {
@@ -222,7 +231,7 @@ async function checkExtensionUpdate() {
             });
             if (resp.ok) {
                 const data = await resp.json();
-                data && data.version && (version = data.version, downloadUrl = data.download_url || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest", 
+                data && data.version && (version = data.version, downloadUrl = data.download_url || "https://github.com/Zielzy/M-Stream-Bridge/releases/latest",
                 await chrome.storage.local.set({
                     upstreamVersion: version,
                     downloadUrl: downloadUrl,
@@ -232,7 +241,7 @@ async function checkExtensionUpdate() {
         }
         if (version && isNewerVersion(version, currentVersion)) {
             const banner = document.getElementById("update-banner"), verSpan = document.getElementById("update-ver"), link = document.getElementById("update-link");
-            banner && verSpan && link && (verSpan.textContent = `v${version}`, link.href = downloadUrl, 
+            banner && verSpan && link && (verSpan.textContent = `v${version}`, link.href = downloadUrl,
             banner.style.display = "flex"), chrome.action?.setBadgeText && (chrome.action.setBadgeText({
                 text: "UP"
             }), chrome.action.setBadgeBackgroundColor({

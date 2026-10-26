@@ -72,6 +72,9 @@ def validate_playback(media_url: str, headers: dict, opener) -> None:
     request_headers = dict(headers)
     for _ in range(2):
         with opener(target, request_headers, 20, False) as response:
+            final_url = getattr(response, 'url', None)
+            if final_url and (not valid_hls_url(final_url, program.group(1))):
+                raise RTPResolveError('RTP manifest redirected outside clear HLS')
             if getattr(response, 'status', 200) != 200:
                 raise RTPResolveError('RTP manifest unavailable')
             playlist = response.read(MAX_PLAYLIST_BYTES + 1)
@@ -90,6 +93,9 @@ def validate_playback(media_url: str, headers: dict, opener) -> None:
             segment_headers = dict(request_headers)
             segment_headers['range'] = 'bytes=0-1023'
             with opener(next_url, segment_headers, 25, True) as response:
+                final_url = getattr(response, 'url', None)
+                if final_url and (urlsplit(final_url).scheme != 'https' or urlsplit(final_url).hostname != 'streaming-vod.rtp.pt'):
+                    raise RTPResolveError('RTP segment redirected to unexpected host')
                 if getattr(response, 'status', 200) not in {200, 206} or not response.read(1024):
                     raise RTPResolveError('RTP segment unavailable')
             return
