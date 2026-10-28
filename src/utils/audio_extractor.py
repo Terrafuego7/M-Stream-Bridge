@@ -26,6 +26,7 @@ import urllib.parse
 from curl_cffi import requests as cffi_requests
 
 from core.config import get_config_path
+from core.x_resolver import is_x_fragment, is_x_media, _attributes as x_hls_attributes
 from core.state import is_host_paused, set_host_pause, wait_if_host_paused
 from utils.ffmpeg_downloader import get_ffmpeg_path, is_ffmpeg_installed
 
@@ -77,6 +78,8 @@ def cancel_extraction() -> None:
 def start_extraction_async(url: str, headers: dict[str, str] | None = None, stream_type: str = "hls") -> None:
     """Launch asynchronous audio extraction thread for active media stream."""
     global _extract_status, _extract_percent, _extract_error
+    if is_x_fragment(url):
+        raise ValueError("X audio extraction rejected an HLS fragment; capture the post's HLS master first.")
 
     with _extract_lock:
         if _extract_status == "extracting":
@@ -232,7 +235,7 @@ def _download_segment_once(
         else:
             return resp.status_code, 0, None, f"HTTP {resp.status_code}"
     except Exception as e:
-        return 0, 0, None, str(e)
+        return 0, 0, None, "X segment network error" if is_x_media(url) else str(e)
 
 
 # =============================================================================
@@ -266,7 +269,7 @@ def _extract_worker(url: str, headers: dict[str, str] | None, stream_type: str) 
         with _extract_lock:
             if _extract_status == "extracting":
                 _extract_status = "error"
-                _extract_error = str(e)
+                _extract_error = "X audio extraction failed. Reload the post and capture its HLS master." if is_x_media(url) else str(e)
                 logger.error("[AUDIO ERROR] Exception: %s", _extract_error)
     finally:
         with _extract_lock:
@@ -277,7 +280,7 @@ def _extract_direct(url: str, headers: dict[str, str] | None, out_path: Path) ->
     """Extract audio from direct HTTP/MP4 video stream using native FFmpeg process."""
     global _extract_process, _extract_status, _extract_percent, _extract_error
 
-    logger.info("[AUDIO] Starting native FFmpeg extraction for direct stream: %s", url)
+    logger.info("[AUDIO] Starting native FFmpeg extraction for direct stream: %s", "[X media]" if is_x_media(url) else url)
     if headers:
         logger.info("[AUDIO] Captured headers keys: %s", list(headers.keys()))
     else:
@@ -305,7 +308,7 @@ def _extract_direct(url: str, headers: dict[str, str] | None, out_path: Path) ->
     cmd = [
         str(get_ffmpeg_path()),
         "-y",
-        "-loglevel", "debug",
+        "-loglevel", "error" if is_x_media(url) else "debug",
         "-user_agent", user_agent,
     ]
     if header_str:
@@ -354,7 +357,8 @@ def _extract_direct(url: str, headers: dict[str, str] | None, out_path: Path) ->
         else:
             _extract_status = "error"
             log_snippet = "\n".join(last_lines)
-            _extract_error = f"FFmpeg failed with code {returncode}. Log: {log_snippet}"
+            _extract_error = ("X audio extraction failed: the selected MP4 has no usable audio. Capture the post's HLS master."
+                              if is_x_media(url) else f"FFmpeg failed with code {returncode}. Log: {log_snippet}")
             logger.error("[FFMPEG ERROR] %s", _extract_error)
 
 
@@ -380,14 +384,15 @@ def _extract_hls(url: str, headers: dict[str, str] | None, out_path: Path) -> No
 
     # Phase 1.5: Audio Rendition Detection
     for line in lines:
-        if line.startswith("#EXT-X-MEDIA:TYPE=AUDIO"):
+        if (line.startswith("#EXT-X-MEDIA:TYPE=AUDIO")
+                or (is_x_media(url) and line.startswith('#EXT-X-MEDIA:') and x_hls_attributes(line).get('TYPE') == 'AUDIO')):
             match = re.search(r'URI="([^"]+)"', line)
             if match:
                 target_playlist_url = match.group(1)
                 if not target_playlist_url.startswith("http"):
                     target_playlist_url = urllib.parse.urljoin(url, target_playlist_url)
                 has_audio_rendition = True
-                logger.info("[AUDIO] Detected separate audio rendition! URL: %s", target_playlist_url)
+                logger.info("[AUDIO] Detected separate audio rendition! URL: %s", "[X audio playlist]" if is_x_media(url) else target_playlist_url)
                 break
 
     # If no audio rendition, fallback to lowest bandwidth video stream
@@ -411,7 +416,7 @@ def _extract_hls(url: str, headers: dict[str, str] | None, out_path: Path) -> No
                 target_playlist_url = urllib.parse.urljoin(url, target_playlist_url)
             logger.info("[AUDIO] No separate audio. Falling back to lowest bandwidth video variant.")
 
-    logger.info("[AUDIO] FFmpeg extracting directly from: %s", target_playlist_url)
+    logger.info("[AUDIO] FFmpeg extracting directly from: %s", "[X audio playlist]" if is_x_media(url) else target_playlist_url)
 
     # Phase 2: Parse segment URLs
     resp = cffi_session.get(target_playlist_url, headers=headers, timeout=30)
@@ -544,6 +549,8 @@ def _extract_hls(url: str, headers: dict[str, str] | None, out_path: Path) -> No
                 if status == 200 and data is not None:
                     success = True
                     break
+                if is_x_media(seg_url) and status in {401, 403, 451}:
+                    break
 
                 if attempt < max_retries:
                     if status == 429:
@@ -570,7 +577,8 @@ def _extract_hls(url: str, headers: dict[str, str] | None, out_path: Path) -> No
                 with _extract_lock:
                     if _extract_status == "extracting":
                         _extract_status = "error"
-                        _extract_error = f"Segment {idx} failed after {max_retries} attempts: {err}"
+                        _extract_error = (f"X audio segment failed (HTTP {status})." if is_x_media(seg_url)
+                                          else f"Segment {idx} failed after {max_retries} attempts: {err}")
                         error_event.set()
             elif success and data is not None:
                 with write_lock:
@@ -644,5 +652,6 @@ def _extract_hls(url: str, headers: dict[str, str] | None, out_path: Path) -> No
         else:
             _extract_status = "error"
             log_snippet = "\n".join(last_lines)
-            _extract_error = f"FFmpeg failed with code {returncode}. Log: {log_snippet}"
+            _extract_error = ("X HLS audio extraction failed. Check the captured master and audio rendition."
+                              if is_x_media(url) else f"FFmpeg failed with code {returncode}. Log: {log_snippet}")
             logger.error("[FFMPEG ERROR] %s", _extract_error)

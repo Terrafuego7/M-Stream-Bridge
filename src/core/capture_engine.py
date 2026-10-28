@@ -20,6 +20,8 @@ import threading
 import time
 from typing import Any, NamedTuple
 import urllib.parse
+from core.x_diagnostics import valid_capture_id, new_trace
+from core.x_resolver import is_x_fragment
 
 from core.state import (
     CAPTURE_TAB_META_TTL_SEC,
@@ -177,6 +179,8 @@ class CaptureEngineMixin:
         Uses get_initial_stream_state() so default definitions stay centralized in state.py.
         """
         initial = get_initial_stream_state()
+        stream_obj.pop("x_capture_id", None)
+        stream_obj.pop("x_diagnostic", None)
         keys_to_preserve = {"stream_url", "stream_type", "m3u8_url", "subtitle_url", "subtitle_filename"}
 
         for k, v in initial.items():
@@ -391,6 +395,8 @@ class CaptureEngineMixin:
 
     def _is_media_capture_target(self, url: str) -> bool:
         """Check if URL pattern matches known media streaming or manifest files."""
+        if is_x_fragment(url):
+            return False
         lowered = (url or "").lower()
         if not lowered:
             return False
@@ -411,6 +417,8 @@ class CaptureEngineMixin:
 
     def _is_probably_init_segment(self, url: str) -> bool:
         """Check if URL points to an initialization or sample video chunk."""
+        if is_x_fragment(url):
+            return True
         lowered = (url or "").lower()
         if not lowered:
             return False
@@ -552,6 +560,10 @@ class CaptureEngineMixin:
             )
             return
 
+        if is_x_fragment(resolved_stream_url):
+            self._send_json(202, {"status": "ignored", "code": "x_fragment_skipped",
+                                  "message": "X HLS fragment is not a complete video."})
+            return
         if stream_type == "direct" and self._is_probably_audio_direct(resolved_stream_url):
             self._log("DEBUG", f"[{capture_source}] DROP reason=audio_direct | capture={capture_id} | url={resolved_stream_url[:60]}")
             self._send_json(
@@ -728,6 +740,14 @@ class CaptureEngineMixin:
 
             if not keep_existing_master:
                 current_stream["content_type"] = self._guess_content_type(resolved_stream_url)
+                if capture_source == "x_resolver" and valid_capture_id(capture_id):
+                    previous_trace = current_stream.get("x_diagnostic")
+                    current_stream["x_capture_id"] = capture_id
+                    current_stream["x_diagnostic"] = (previous_trace if previous_trace and previous_trace.get('capture_id') == capture_id
+                                                      else new_trace(capture_id))
+                else:
+                    current_stream.pop("x_capture_id", None)
+                    current_stream.pop("x_diagnostic", None)
             current_stream["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             if not keep_existing_master:
@@ -742,7 +762,7 @@ class CaptureEngineMixin:
         if stream_type == "hls":
             with STATE_LOCK:
                 needs_guesser = not self._is_hls_master_url(current_stream.get("hls_master_url") or "")
-            if needs_guesser:
+            if needs_guesser and capture_source != "x_resolver":
                 self._guess_master_playlist_fallback(resolved_stream_url, request_headers)
 
         elapsed_backend = int((time.time() * 1000) - capture_ts) if capture_ts else 0
@@ -799,6 +819,7 @@ class CaptureEngineMixin:
                 "stream": {
                     "stream_url": stream_snapshot.get("stream_url"),
                     "stream_type": stream_snapshot.get("stream_type"),
+                    "x_capture_id": stream_snapshot.get("x_capture_id"),
                     "m3u8_url": stream_snapshot.get("m3u8_url"),
                     "referer": stream_snapshot.get("referer"),
                     "subtitle_url": stream_snapshot.get("subtitle_url"),

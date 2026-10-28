@@ -601,7 +601,8 @@
     if (!info) return "";
     const ep = info.episode || info.detected_episode || "";
     const season = info.season || "";
-    return [info.stream_url || "", info.stream_type || "", info.title || "", season, ep].join("|");
+    const key = [info.stream_url || "", info.stream_type || "", info.title || "", season, ep].join("|");
+    return info.x_capture_id ? key + '|' + info.x_capture_id : key;
   }
 
   /**
@@ -800,6 +801,7 @@
       hasStream,
       stream_url: streamUrl,
       stream_type: streamType || (/\.m3u8(\?|$)/i.test(streamUrl) ? "hls" : "direct"),
+      x_capture_id: nested.x_capture_id || null,
       m3u8_url: streamUrl,
       title,
       clean_title: title,
@@ -1353,6 +1355,45 @@
    * @param {boolean} useProxy - True if playing via local proxy server, false if direct CDN.
    * @param {boolean} isFullMode - True if Full Mode target-audio stream.
    */
+  // X telemetry contains only an opaque capture ID and allowlisted stage codes.
+  function reportXPlayback(info, stage, code = 'ok', extra = {}) {
+    if (!/^x-[a-z0-9-]{8,64}$/.test(info?.x_capture_id || '')) return;
+    const event = { capture_id: info.x_capture_id, stage, code };
+    reportXPlayback.last = event;
+    if (Number.isInteger(extra.http) && extra.http >= 100 && extra.http <= 599) event.http = extra.http;
+    if (Number.isInteger(extra.media_error) && extra.media_error >= 1 && extra.media_error <= 4) event.media_error = extra.media_error;
+    void fetch(`${BRIDGE_ORIGIN}/api/x-playback`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) }).catch(() => {});
+  }
+
+  function traceXPlayback(video, info, useProxy) {
+    if (!info?.x_capture_id) return () => {};
+    if (!useProxy) {
+      reportXPlayback(info, 'player_error', 'proxy_required');
+      return () => {};
+    }
+    reportXPlayback(info, 'player_loading');
+    let start = video.currentTime || 0, confirmed = false;
+    const reset = () => { start = video.currentTime || 0; };
+    const progress = () => {
+      const recovering = reportXPlayback.last?.capture_id === info.x_capture_id && reportXPlayback.last?.stage === 'player_error';
+      if ((!confirmed || recovering) && !video.paused && video.readyState >= 2 && video.videoWidth > 0
+          && video.currentTime > start + 0.1) {
+        confirmed = true;
+        reportXPlayback(info, 'player_playing');
+      }
+    };
+    const error = () => reportXPlayback(info, 'player_error', 'native_media', { media_error: video.error?.code });
+    video.addEventListener('emptied', reset);
+    video.addEventListener('timeupdate', progress);
+    video.addEventListener('error', error);
+    return () => {
+      video.removeEventListener('emptied', reset);
+      video.removeEventListener('timeupdate', progress);
+      video.removeEventListener('error', error);
+    };
+  }
+
   async function playStream(useProxy, isFullMode = false) {
     const info = latestStream || (await fetchCurrentStream());
     const hls = isHlsStream(info);
@@ -1378,7 +1419,11 @@
       } catch (err) { }
     }
 
-    const video = await ensureVideoForDirectInject();
+    let video;
+    try { video = await ensureVideoForDirectInject(); }
+    catch (error) { reportXPlayback(info, 'player_error', 'no_video_element'); throw error; }
+    sharedState.xTraceCleanup?.();
+    sharedState.xTraceCleanup = traceXPlayback(video, info, useProxy);
     sharedState.activeVideo = video;
     sharedState.activeVideoStreamKey = streamKey;
     sharedState.lastDurationHintKey = streamKey;
@@ -1482,7 +1527,9 @@
             }
             try {
               await video.play();
-            } catch (_err) { }
+            } catch (error) {
+              if (error?.name === 'NotAllowedError') reportXPlayback(info, 'player_error', 'autoplay_blocked');
+            }
             sharedState.lastPlaybackKey = streamKey;
             sharedState.lastPlaybackTitle = streamTitle;
             setStatus(`HLS feed active: ${info.title}`, false);
@@ -1506,6 +1553,9 @@
 
           hlsPlayer.on(window.Hls.Events.ERROR, function (_evt, details) {
             if (!details) return;
+            if (details.fatal) reportXPlayback(info, 'player_error',
+              details.type === window.Hls.ErrorTypes.NETWORK_ERROR ? 'hls_network' : 'hls_media',
+              { http: details.response?.code });
             console.warn("[Bridge] HLS event error:", details.type, details.details, "fatal:", details.fatal);
 
             if (details.fatal) {
@@ -1560,7 +1610,9 @@
         }
         try {
           await video.play();
-        } catch (_err) { }
+        } catch (error) {
+          if (error?.name === 'NotAllowedError') reportXPlayback(info, 'player_error', 'autoplay_blocked');
+        }
         sharedState.lastPlaybackKey = streamKey;
         sharedState.lastPlaybackTitle = streamTitle;
         setStatus(`HLS feed active: ${info.title}`, false);
@@ -1568,6 +1620,7 @@
         return;
       }
 
+      reportXPlayback(info, 'player_error', 'unsupported_hls');
       throw new Error("HLS detected, but neither Hls.js nor native HLS playback is supported.");
     }
 
@@ -1580,7 +1633,9 @@
     }
     try {
       await video.play();
-    } catch (_err) { }
+    } catch (error) {
+      if (error?.name === 'NotAllowedError') reportXPlayback(info, 'player_error', 'autoplay_blocked');
+    }
     sharedState.lastPlaybackKey = streamKey;
     sharedState.lastPlaybackTitle = streamTitle;
     setStatus(`Direct feed active: ${info.title}`, false);
@@ -2053,6 +2108,8 @@
     try {
       const startResp = await fetch(`${BRIDGE_ORIGIN}/api/extract-audio`, { method: "POST" });
       const startData = await startResp.json();
+      reportXPlayback(latestStream, startData.status === 'error' ? 'audio_error' : 'audio_requested',
+        startData.status === 'error' ? (startData.code === 'x_fragment_selected' ? 'x_fragment_selected' : 'audio_extract_failed') : 'ok');
       if (startData.status === "error") throw new Error(startData.message);
 
       fullModePollInterval = setInterval(pollFullModeProgress, 1000);
@@ -2076,12 +2133,14 @@
         fullModeBar.style.width = `${data.percent}%`;
         fullModeText.textContent = `${data.percent}%`;
       } else if (data.status === "done") {
+        reportXPlayback(latestStream, 'audio_ready');
         clearInterval(fullModePollInterval);
         fullModeStatus.textContent = "Ready...";
         fullModeBar.style.width = "100%";
         fullModeText.textContent = "100%";
         await bootstrapFullModePlayer();
       } else if (data.status === "error") {
+        reportXPlayback(latestStream, 'audio_error', 'audio_extract_failed');
         clearInterval(fullModePollInterval);
         fullModeStatus.textContent = `Extraction failed: ${data.error}`;
         fullModeStatus.style.color = "#ef4444";
@@ -2234,6 +2293,7 @@
     }
 
     destroyHls();
+    sharedState.xTraceCleanup?.();
     try { panel.remove(); } catch (_err) { }
   };
 

@@ -159,6 +159,10 @@ class HlsProxyMixin:
         )
         if is_known_cdn and ref_netloc and not target_netloc.endswith(ref_netloc):
             headers.pop("cookie", None)
+        if target_parsed.hostname == "video.twimg.com" and ref_parsed and ref_parsed.hostname in {
+            "x.com", "www.x.com", "twitter.com", "www.twitter.com"
+        }:
+            headers.pop("cookie", None)
 
         normalized_target = self._normalize_header_map_key(target_url)
         lookup_level = "DEBUG"
@@ -183,7 +187,10 @@ class HlsProxyMixin:
         stream_snapshot = self._snapshot_stream(include_replay_map=False)
         replay_headers = self._sanitize_forward_headers(stream_snapshot.get("request_headers") or {})
         replay_headers.update(self._extract_client_replay_headers())
-        return self._apply_identity_headers(replay_headers, stream_snapshot)
+        headers = self._apply_identity_headers(replay_headers, stream_snapshot)
+        if urllib.parse.urlparse(stream_snapshot.get("stream_url") or "").hostname == "video.twimg.com":
+            headers.pop("cookie", None)
+        return headers
 
     # =========================================================================
     # M3U8 Playlist Rewriting Engine
@@ -681,7 +688,8 @@ class HlsProxyMixin:
                     code = int(getattr(exc, "code", 0) or 0)
                     if code == 403:
                         # 1-shot clean-header retry: remove foreign cookies/referer and retry once immediately
-                        if attempt == 1 and ("cookie" in hls_headers or "referer" in hls_headers or "origin" in hls_headers):
+                        if (attempt == 1 and urllib.parse.urlparse(target_url).hostname != "video.twimg.com"
+                                and ("cookie" in hls_headers or "referer" in hls_headers or "origin" in hls_headers)):
                             clean_headers = {
                                 k: v
                                 for k, v in hls_headers.items()

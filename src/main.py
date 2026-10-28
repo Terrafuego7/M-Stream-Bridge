@@ -76,6 +76,8 @@ from core.config import (
 from core.hls_proxy import HlsProxyMixin
 from core.rtp_resolver import RTPResolveError, episode_ids, extract_format, validate_playback
 from core.southpark_resolver import SouthParkError, resolve_episode as resolve_southpark_episode
+from core.x_resolver import XResolveError, resolve_post as resolve_x_post, is_x_fragment
+from core.x_diagnostics import valid_capture_id, record as record_x_diagnostic
 from core.state import (
     CAPTURE_TAB_META_TTL_SEC,
     HOST,
@@ -498,9 +500,9 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
         return
 
     def _log(self, level: str, message: str) -> None:
-        # South Park puts session signatures in both paths and queries.
-        message = re.sub(r"https?://(?:ns-stream\.paramount\.tech|southpark\.orchestrator\.viacomcbs-tech\.com)/[^\s\"'<>]+",
-                         "[South Park media URL]", message)
+        # These CDNs can include session data in media paths and queries.
+        message = re.sub(r"https?://(?:ns-stream\.paramount\.tech|southpark\.orchestrator\.viacomcbs-tech\.com|video\.twimg\.com)/[^\s\"'<>]+",
+                         "[signed media URL]", message)
         current_priority = self.LOG_PRIORITY.get(LOG_LEVEL, 20)
         incoming_priority = self.LOG_PRIORITY.get((level or "INFO").upper(), 20)
         if incoming_priority < current_priority:
@@ -1117,6 +1119,12 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
         self.end_headers()
 
     def do_POST(self) -> None:
+        if self.path == "/api/x-playback":
+            self._handle_x_playback()
+            return
+        if self.path == "/api/resolve-x":
+            self._handle_resolve_x()
+            return
         if self.path == "/api/resolve-southpark":
             self._handle_resolve_southpark()
             return
@@ -1166,6 +1174,52 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
             self._handle_shutdown()
             return
         self._send_json(404, {"status": "error", "message": "Not found"})
+
+    def _handle_x_playback(self) -> None:
+        try:
+            data = self._read_json_body()
+            capture_id = data.get("capture_id")
+            if not valid_capture_id(capture_id):
+                raise ValueError("Invalid capture ID")
+            with STATE_LOCK:
+                trace = current_stream.get("x_diagnostic")
+                if (not trace or trace.get("capture_id") != capture_id
+                        or urllib.parse.urlsplit(current_stream.get("stream_url") or "").hostname != "video.twimg.com"):
+                    self._send_json(409, {"status": "error", "code": "capture_changed"})
+                    return
+                safe = record_x_diagnostic(trace, data)
+                current_stream["x_diagnostic"] = safe
+            self._log("INFO", f"X trace {capture_id}: {safe['stage']}")
+            self._send_json(200, {"status": "ok"})
+        except (ValueError, TypeError):
+            self._send_json(400, {"status": "error", "code": "invalid_diagnostic"})
+
+    def _handle_x_diagnostics(self, qs) -> None:
+        capture_id = (qs.get("capture_id") or [""])[0]
+        with STATE_LOCK:
+            trace = current_stream.get("x_diagnostic")
+            if (not valid_capture_id(capture_id) or not trace or trace.get("capture_id") != capture_id
+                    or urllib.parse.urlsplit(current_stream.get("stream_url") or "").hostname != "video.twimg.com"):
+                self._send_json(409, {"status": "error", "code": "capture_changed"})
+                return
+            safe = {"capture_id": trace["capture_id"], "stage": trace["stage"],
+                    "events": list(trace["events"]), "server_version": BRIDGE_VERSION}
+        self._send_json(200, {"status": "ok", **safe})
+
+    def _handle_resolve_x(self) -> None:
+        try:
+            data = self._read_json_body()
+            result = resolve_x_post(str(data.get("page_url") or ""))
+            self._log("INFO", f"X resources checked on server only: {result['stream_type']} {result['height']}p")
+            self._send_json(200, result, allow_cors=True)
+        except XResolveError as exc:
+            self._log("WARN", f"X video rejected: {exc.code}")
+            self._send_json(400 if exc.code == "invalid_page" else 422,
+                            {"status": "error", "code": exc.code, "message": str(exc)}, allow_cors=True)
+        except Exception as exc:
+            self._log("WARN", f"X video failed: {type(exc).__name__}")
+            self._send_json(502, {"status": "error", "code": "resolver_error",
+                                  "message": "X media validation failed."}, allow_cors=True)
 
     def _handle_resolve_southpark(self) -> None:
         try:
@@ -1223,6 +1277,9 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
             return
         if path == "/api/current-stream":
             self._handle_current_stream()
+            return
+        if path == "/api/x-diagnostics":
+            self._handle_x_diagnostics(qs)
             return
         if path == "/api/config":
             self._handle_get_config()
@@ -1976,7 +2033,7 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
     def _promote_capture_candidate(self, candidate: dict[str, Any], forced: bool = False) -> bool:
         now = time.time()
         url = self._normalize_url(candidate.get("url") or "")
-        if not url:
+        if not url or is_x_fragment(url):
             return False
         if not self._is_valid_http_url(url):
             return False
@@ -2177,6 +2234,10 @@ class BridgeProxyHandler(http.server.BaseHTTPRequestHandler, CaptureEngineMixin,
     def _handle_extract_audio(self) -> None:
         snapshot = self._snapshot_stream()
         url = snapshot.get("stream_url") or snapshot.get("hls_master_url") or ""
+        if is_x_fragment(url):
+            self._send_json(422, {"status": "error", "code": "x_fragment_selected",
+                "message": "X: an HLS fragment was captured as a complete video. Reload the post and select its HLS stream before Full Mode."})
+            return
         if not url:
             self._send_json(400, {"status": "error", "message": "No active stream found."})
             return
@@ -2304,6 +2365,7 @@ def run_server() -> None:
     print("  - POST /set-stream")
     print("  - POST /api/resolve-rtp")
     print("  - POST /api/resolve-southpark")
+    print("  - POST /api/resolve-x")
     print("  - POST /update-meta")
     print("  - POST /capture-event")
     print("  - POST /capture-request")

@@ -34,6 +34,32 @@ const RECENT_ONLINE_GRACE_MS = 2500; // Grace period before marking server offli
 let latestState = null;
 let toastTimer = null;
 let lastServerOnlineAt = 0;
+let xDiagnosticContext = null;
+
+async function renderXDiagnostic(context) {
+  const { xDiagnosticReport, xDiagnosticMessage } = await import('./x_diagnostics.js');
+  if (context.tabId != null) {
+    const key = `x:${context.tabId}`;
+    const local = (await chrome.storage.session.get(key))[key];
+    if (local?.pageUrl === context.pageUrl) context = { ...context, local, captureId: local.captureId };
+  }
+  let server = {};
+  if (context.captureId && !['resolver', 'waiting_for_tab'].includes(context.local?.stage)) {
+    try {
+      const response = await fetch(`${BRIDGE_ORIGIN}/api/x-diagnostics?capture_id=${encodeURIComponent(context.captureId)}`, { cache: 'no-store' });
+      if (response.ok) server = await response.json();
+      else if (response.status !== 409 || context.local?.state !== 'checking')
+        context = { ...context, local: { state: 'error', stage: 'diagnostic', code: response.status === 404 ? 'server_update_required' : 'capture_changed', http: response.status } };
+    } catch { context = { ...context, local: { state: 'error', stage: 'diagnostic', code: 'network_error' } }; }
+  }
+  const report = xDiagnosticReport({ ...context, server, extensionVersion: chrome.runtime.getManifest().version });
+  setStatus(report.stage === 'player_playing', '');
+  el.status.querySelector('.status-text').textContent = xDiagnosticMessage(report);
+  if (!report.stage.endsWith('error') && report.code === 'ok' && report.stage !== 'player_playing')
+    el.status.querySelector('.status-dot').style.background = '#f59e0b';
+  document.getElementById('x-diagnostics').hidden = false;
+  document.getElementById('x-diagnostics-text').textContent = JSON.stringify(report, null, 2);
+}
 
 const el = {
   pill: document.getElementById("stream-pill"),
@@ -315,7 +341,7 @@ async function openMigakuPlayerDirect() {
 async function refreshState() {
   try {
     setStatus(true, "Verifying bridge connection...");
-    await fetchJsonWithRetry(`${BRIDGE_ORIGIN}/health`);
+    const health = await fetchJsonWithRetry(`${BRIDGE_ORIGIN}/health`);
     lastServerOnlineAt = Date.now();
     setServerIndicator(true);
 
@@ -328,21 +354,36 @@ async function refreshState() {
     } else {
       setStatus(true, "Bridge active. Awaiting media stream...");
     }
-    // South Park resolution errors must not look like a successful capture of
-    // an unrelated previous stream. Other sites keep the normal popup flow.
+    // A site resolver error must not display the previous tab's stream as captured.
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const key = `southpark:${tab?.id}`;
-      const capture = (await chrome.storage.session.get(key))[key];
+      const southParkKey = `southpark:${tab?.id}`;
+      const xKey = `x:${tab?.id}`;
+      const saved = await chrome.storage.session.get([southParkKey, xKey, 'x:last']);
+      const capture = [saved[southParkKey], saved[xKey]].find(item => item?.pageUrl === tab?.url);
       if (capture?.pageUrl === tab?.url) {
         setStatus(capture.state !== "error", "");
         el.status.querySelector(".status-text").textContent = capture.message;
-        if (capture.state !== "ready") {
-          el.title.textContent = "South Park";
-          el.url.textContent = capture.state === "error" ? "Episode unavailable" : "Validating episode…";
+        if (capture.state !== "ready" && capture.state !== 'proxy_checked') {
+          el.title.textContent = capture === saved[xKey] ? "X video" : "South Park";
+          el.url.textContent = capture.state === "error" ? "Video unavailable" : "Validating video…";
           el.pill.style.display = "none";
           renderSeasonEpisode(null, null);
         }
+      }
+      const isXTab = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\//.test(tab?.url || '');
+      const isXStream = /^https:\/\/video\.twimg\.com\//.test(data?.stream?.stream_url || '');
+      if (isXTab || isXStream || data?.stream?.x_capture_id) {
+        let local = saved[xKey]?.pageUrl === tab?.url ? saved[xKey] : {};
+        if (!local.stage && isXTab) local = { stage: 'detection', code: 'open_post' };
+        if (isXStream && /\/(?:vid|aud)\/[^/]+\/(?:\d+\/){2,}/.test(new URL(data.stream.stream_url).pathname))
+          local = { state: 'error', stage: 'selection', code: 'fragment_selected' };
+        const captureId = local.captureId || data?.stream?.x_capture_id;
+        if (isXStream && !captureId && local.code !== 'fragment_selected')
+          local = { state: 'error', stage: 'diagnostic', code: 'server_update_required' };
+        xDiagnosticContext = { local, captureId, serverVersion: health.version,
+          tabId: saved[xKey]?.pageUrl === tab?.url ? tab.id : null, pageUrl: tab?.url };
+        await renderXDiagnostic(xDiagnosticContext);
       }
     } catch (_err) { }
   } catch (err) {
@@ -375,6 +416,7 @@ async function openMigakuPlayer() {
   } catch (_err) { }
 
   if (!resp?.ok) {
+    if (resp?.code === 'x_capture_failed') throw new Error(resp.error);
     resp = await openMigakuPlayerDirect();
   }
 
@@ -395,7 +437,9 @@ if (el.openMigaku) {
     try {
       await openMigakuPlayer();
     } catch (err) {
-      setStatus(false, "Failed to launch Migaku Player.");
+      setStatus(false, '');
+      el.status.querySelector('.status-text').textContent = err?.message?.startsWith('X capture stopped at ')
+        ? err.message : 'Failed to launch Migaku Player.';
       showToast("Failed to open Migaku");
     }
   });
@@ -476,4 +520,5 @@ async function checkExtensionUpdate() {
 
 void refreshState();
 void checkExtensionUpdate();
+setInterval(() => { if (xDiagnosticContext) void renderXDiagnostic(xDiagnosticContext); }, 1500);
 
