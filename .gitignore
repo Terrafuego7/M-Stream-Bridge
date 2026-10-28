@@ -3,9 +3,22 @@
 .env.*
 !.env.example
 
+# Local dependencies, generated release copies and runtime assets
+/.venv/
+/venv/
+/node_modules/
+/build/
+/build_out/
+/dist/
+/extension/
+/_internal/
+/local_build/
+/release_staging/
+/bin/
+/migaku-player-snippet.js
+/rtp_probe_tmp.mjs
+
 # Build Outputs & Ephemeral Distributions
-/bin/*
-!/bin/yt-dlp-rtp-support.exe
 /temp/
 *.build/
 *.dist/

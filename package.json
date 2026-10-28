@@ -1,0 +1,7 @@
+{
+  "name": "m-stream-bridge-build",
+  "private": true,
+  "devDependencies": {
+    "terser": "5.51.2"
+  }
+}

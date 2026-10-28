@@ -12,6 +12,15 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "24"
+        cache: 'npm'
+
+    - name: Install JavaScript Build Dependencies
+      run: npm ci --ignore-scripts --no-audit --no-fund
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
